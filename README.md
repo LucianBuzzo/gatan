@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="gatan-logo.png" alt="Gatan logo" width="260" />
+</p>
+
 # Gatan
 
 Gatan is a macOS Bash utility for inspecting services bound to TCP ports.
