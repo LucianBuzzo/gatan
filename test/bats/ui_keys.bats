@@ -25,3 +25,112 @@ setup() {
   [ "$status" -eq 0 ]
   [ "$output" = "ENTER" ]
 }
+
+@test "ui_pad_to_width right pads text" {
+  run env PROJECT_ROOT="$PROJECT_ROOT" bash -c '
+    source "$PROJECT_ROOT/lib/gatan/ui.sh"
+    out="$(ui_pad_to_width "abc" 5)"
+    printf "<%s>\n" "$out"
+  '
+
+  [ "$status" -eq 0 ]
+  [ "$output" = "<abc  >" ]
+}
+
+@test "ui_pad_to_width truncates when longer than width" {
+  run env PROJECT_ROOT="$PROJECT_ROOT" bash -c '
+    source "$PROJECT_ROOT/lib/gatan/ui.sh"
+    out="$(ui_pad_to_width "abcdef" 4)"
+    printf "<%s>\n" "$out"
+  '
+
+  [ "$status" -eq 0 ]
+  [ "$output" = "<abc~>" ]
+}
+
+@test "ui_render_main includes selected row marker" {
+  run env PROJECT_ROOT="$PROJECT_ROOT" bash -c '
+    source "$PROJECT_ROOT/lib/gatan/constants.sh"
+    source "$PROJECT_ROOT/lib/gatan/ui.sh"
+
+    APP_ROWS=($'\''node\t123\talice\t22u\t*:3000\t3000\t*\tTCP'\'' $'\''nginx\t45\troot\t6u\t127.0.0.1:80\t80\t127.0.0.1\tTCP'\'')
+    APP_STATUS_MESSAGE="Ready."
+
+    tput() {
+      case "$1" in
+        lines) printf "20\n" ;;
+        cols) printf "80\n" ;;
+        *) return 0 ;;
+      esac
+    }
+
+    ui_render_main 1 0 "Ready."
+  '
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"> 80"* ]]
+}
+
+@test "ui_paint_frame updates only changed rows in incremental mode" {
+  run env PROJECT_ROOT="$PROJECT_ROOT" bash -c '
+    source "$PROJECT_ROOT/lib/gatan/ui.sh"
+
+    ui_term_emit() {
+      printf "<%s" "$1"
+      if [ -n "${2:-}" ]; then
+        printf ",%s" "$2"
+      fi
+      if [ -n "${3:-}" ]; then
+        printf ",%s" "$3"
+      fi
+      printf ">"
+    }
+
+    UI_INCREMENTAL_SUPPORTED=1
+    UI_FORCE_FULL_REDRAW=0
+    UI_FRAME_WIDTH=10
+    UI_FRAME_HEIGHT=2
+    UI_FRAME_LINES=("row0" "old")
+    UI_NEXT_WIDTH=10
+    UI_NEXT_HEIGHT=2
+    UI_NEXT_LINES=("row0" "new")
+
+    ui_paint_frame
+  '
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"<cup,1,0><el>new"* ]]
+  [[ "$output" != *$'\033[H\033[2J'* ]]
+}
+
+@test "ui_paint_frame performs full redraw when forced" {
+  run env PROJECT_ROOT="$PROJECT_ROOT" bash -c '
+    source "$PROJECT_ROOT/lib/gatan/ui.sh"
+
+    ui_term_emit() {
+      printf "<%s" "$1"
+      if [ -n "${2:-}" ]; then
+        printf ",%s" "$2"
+      fi
+      if [ -n "${3:-}" ]; then
+        printf ",%s" "$3"
+      fi
+      printf ">"
+    }
+
+    UI_INCREMENTAL_SUPPORTED=1
+    UI_FORCE_FULL_REDRAW=1
+    UI_FRAME_WIDTH=10
+    UI_FRAME_HEIGHT=2
+    UI_FRAME_LINES=("old0" "old1")
+    UI_NEXT_WIDTH=10
+    UI_NEXT_HEIGHT=2
+    UI_NEXT_LINES=("new0" "new1")
+
+    ui_paint_frame
+  '
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *$'\033[H\033[2J'* ]]
+  [[ "$output" == *"<cup,0,0><el>new0<cup,1,0><el>new1"* ]]
+}

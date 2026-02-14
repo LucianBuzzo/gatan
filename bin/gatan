@@ -19,6 +19,7 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # shellcheck source=lib/gatan/ui.sh
 . "$PROJECT_ROOT/lib/gatan/ui.sh"
 
+APP_VERSION="$(gatan_version)"
 APP_ROWS=()
 APP_SELECTED_INDEX=0
 APP_SCROLL_INDEX=0
@@ -31,6 +32,10 @@ APP_VIEW="main"
 APP_RUNNING=1
 APP_NEEDS_REDRAW=0
 SUDO_KEEPALIVE_PID=""
+
+app_mark_redraw() {
+  APP_NEEDS_REDRAW=1
+}
 
 app_print_help() {
   cat <<'EOF_HELP'
@@ -50,15 +55,39 @@ app_set_status() {
 
   APP_STATUS_MESSAGE="$message"
   APP_STATUS_EXPIRES_AT=$(($(date +%s) + ttl))
+  app_mark_redraw
 }
 
 app_get_status_message() {
-  if [ "$APP_STATUS_EXPIRES_AT" -gt 0 ] && [ "$(date +%s)" -gt "$APP_STATUS_EXPIRES_AT" ]; then
+  printf '%s\n' "$APP_STATUS_MESSAGE"
+}
+
+app_expire_status_if_needed() {
+  if [ "$APP_STATUS_EXPIRES_AT" -gt 0 ] && [ "$(date +%s)" -ge "$APP_STATUS_EXPIRES_AT" ]; then
     APP_STATUS_MESSAGE="Ready."
     APP_STATUS_EXPIRES_AT=0
+    return 0
   fi
 
-  printf '%s\n' "$APP_STATUS_MESSAGE"
+  return 1
+}
+
+app_input_timeout_seconds() {
+  local now
+  local remaining
+
+  if [ "$APP_STATUS_EXPIRES_AT" -le 0 ]; then
+    printf '1\n'
+    return 0
+  fi
+
+  now="$(date +%s)"
+  remaining=$((APP_STATUS_EXPIRES_AT - now))
+  if [ "$remaining" -lt 1 ]; then
+    remaining=1
+  fi
+
+  printf '%s\n' "$remaining"
 }
 
 app_start_sudo_keepalive() {
@@ -97,6 +126,7 @@ app_refresh_rows() {
   if [ "${#APP_ROWS[@]}" -eq 0 ]; then
     APP_SELECTED_INDEX=0
     APP_SCROLL_INDEX=0
+    app_mark_redraw
     return 0
   fi
 
@@ -107,6 +137,8 @@ app_refresh_rows() {
   if [ "$APP_SELECTED_INDEX" -lt 0 ]; then
     APP_SELECTED_INDEX=0
   fi
+
+  app_mark_redraw
 }
 
 app_selected_row() {
@@ -230,11 +262,13 @@ app_handle_main_key() {
     UP)
       if [ "$APP_SELECTED_INDEX" -gt 0 ]; then
         APP_SELECTED_INDEX=$((APP_SELECTED_INDEX - 1))
+        app_mark_redraw
       fi
       ;;
     DOWN)
       if [ "$APP_SELECTED_INDEX" -lt $((${#APP_ROWS[@]} - 1)) ]; then
         APP_SELECTED_INDEX=$((APP_SELECTED_INDEX + 1))
+        app_mark_redraw
       fi
       ;;
     ENTER)
@@ -253,6 +287,8 @@ app_handle_main_key() {
       APP_INSPECT_COMMAND="$command"
       app_load_inspect "$pid" || app_set_status "Process $pid is unavailable."
       APP_VIEW="inspect"
+      ui_force_full_redraw
+      app_mark_redraw
       ;;
     K)
       if [ "${#APP_ROWS[@]}" -eq 0 ]; then
@@ -269,6 +305,7 @@ app_handle_main_key() {
       ;;
     R)
       app_refresh_rows
+      ui_force_full_redraw
       app_set_status "Refreshed listener list."
       ;;
     Q)
@@ -283,7 +320,9 @@ app_handle_inspect_key() {
   case "$key" in
     B)
       APP_VIEW="main"
+      ui_force_full_redraw
       app_refresh_rows
+      app_mark_redraw
       ;;
     K)
       if [ -n "$APP_INSPECT_PID" ]; then
@@ -294,12 +333,16 @@ app_handle_inspect_key() {
           app_load_inspect "$APP_INSPECT_PID" || true
         else
           APP_VIEW="main"
+          ui_force_full_redraw
         fi
+        app_mark_redraw
       fi
       ;;
     R)
       if [ -n "$APP_INSPECT_PID" ]; then
+        ui_force_full_redraw
         app_load_inspect "$APP_INSPECT_PID" || app_set_status "Process $APP_INSPECT_PID is unavailable."
+        app_mark_redraw
       fi
       ;;
     Q)
@@ -321,22 +364,28 @@ app_run() {
   fi
 
   ui_init_terminal
+  ui_force_full_redraw
   app_set_status "Loaded ${#APP_ROWS[@]} listening services."
+  app_mark_redraw
 
   while [ "$APP_RUNNING" -eq 1 ]; do
+    if app_expire_status_if_needed; then
+      app_mark_redraw
+    fi
+
     if [ "$APP_NEEDS_REDRAW" -eq 1 ]; then
+      app_adjust_scroll
+
+      if [ "$APP_VIEW" = "main" ]; then
+        ui_render_main "$APP_SELECTED_INDEX" "$APP_SCROLL_INDEX" "$(app_get_status_message)"
+      else
+        ui_render_inspect "$APP_INSPECT_PID" "$APP_INSPECT_COMMAND" "$(app_get_status_message)"
+      fi
+
       APP_NEEDS_REDRAW=0
     fi
 
-    app_adjust_scroll
-
-    if [ "$APP_VIEW" = "main" ]; then
-      ui_render_main "$APP_SELECTED_INDEX" "$APP_SCROLL_INDEX" "$(app_get_status_message)"
-    else
-      ui_render_inspect "$APP_INSPECT_PID" "$APP_INSPECT_COMMAND" "$(app_get_status_message)"
-    fi
-
-    key="$(ui_read_key 0.2 || true)"
+    key="$(ui_read_key "$(app_input_timeout_seconds)" || true)"
     if [ -z "$key" ]; then
       continue
     fi
@@ -379,6 +428,6 @@ main() {
 
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   trap app_cleanup EXIT INT TERM
-  trap 'APP_NEEDS_REDRAW=1' WINCH
+  trap 'ui_force_full_redraw; APP_NEEDS_REDRAW=1' WINCH
   main "$@"
 fi
