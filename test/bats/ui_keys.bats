@@ -26,6 +26,32 @@ setup() {
   [ "$output" = "ENTER" ]
 }
 
+@test "ui_prompt_yes_no forces full redraw after response" {
+  run env PROJECT_ROOT="$PROJECT_ROOT" bash -c '
+    source "$PROJECT_ROOT/lib/gatan/ui.sh"
+
+    tput() {
+      case "$1" in
+        lines) printf "10\n" ;;
+        cols) printf "60\n" ;;
+        *) return 0 ;;
+      esac
+    }
+
+    ui_term_emit() {
+      :
+    }
+
+    UI_FORCE_FULL_REDRAW=0
+    ui_prompt_yes_no "Terminate PID 42? [y/N] " <<<"y"
+    rc="$?"
+    printf "rc=%s force=%s\n" "$rc" "$UI_FORCE_FULL_REDRAW"
+  '
+
+  [ "$status" -eq 0 ]
+  [ "$output" = "Terminate PID 42? [y/N] rc=0 force=1" ]
+}
+
 @test "ui_pad_to_width right pads text" {
   run env PROJECT_ROOT="$PROJECT_ROOT" bash -c '
     source "$PROJECT_ROOT/lib/gatan/ui.sh"

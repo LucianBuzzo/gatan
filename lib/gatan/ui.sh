@@ -615,6 +615,7 @@ ui_prompt_yes_no() {
   local term_rows
   local term_cols
   local key
+  local result=1
 
   term_rows="$(tput lines 2>/dev/null || printf '24')"
   term_cols="$(tput cols 2>/dev/null || printf '80')"
@@ -630,8 +631,21 @@ ui_prompt_yes_no() {
     fi
 
     case "$key" in
-      Y) return 0 ;;
-      N | ENTER | Q | ESC) return 1 ;;
+      Y)
+        result=0
+        break
+        ;;
+      N | ENTER | Q | ESC)
+        result=1
+        break
+        ;;
     esac
   done
+
+  ui_term_emit cup "$((term_rows - 1))" 0
+  ui_term_emit el
+  # Prompt text is drawn outside the frame cache, so force a full redraw.
+  ui_force_full_redraw
+
+  return "$result"
 }
