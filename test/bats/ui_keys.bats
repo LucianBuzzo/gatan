@@ -71,6 +71,31 @@ setup() {
   [[ "$output" == *"> 80"* ]]
 }
 
+@test "ui_render_inspect uses framed layout" {
+  run env PROJECT_ROOT="$PROJECT_ROOT" bash -c '
+    source "$PROJECT_ROOT/lib/gatan/ui.sh"
+
+    APP_INSPECT_CONTENT=$'\''cwd: /tmp\ncmdline: node server.js'\''
+
+    tput() {
+      case "$1" in
+        lines) printf "12\n" ;;
+        cols) printf "50\n" ;;
+        *) return 0 ;;
+      esac
+    }
+
+    ui_render_inspect 123 "node server.js" "Ready."
+  '
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"+------------------------------------------------+"* ]]
+  [[ "$output" == *"|Inspect PID 123 (node server.js)"* ]]
+  [[ "$output" == *"|Keys: b back  k kill  r refresh  q quit"* ]]
+  [[ "$output" == *"|cwd: /tmp"* ]]
+  [[ "$output" == *"|Ready."* ]]
+}
+
 @test "ui_paint_frame updates only changed rows in incremental mode" {
   run env PROJECT_ROOT="$PROJECT_ROOT" bash -c '
     source "$PROJECT_ROOT/lib/gatan/ui.sh"
