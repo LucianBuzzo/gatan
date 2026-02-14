@@ -3,6 +3,18 @@
 UI_ACTIVE=0
 UI_STTY_ORIG=""
 
+ui_read_timeout() {
+  local timeout="${1:-1}"
+
+  # macOS system bash 3.2 only accepts integer read timeouts.
+  if [ "${BASH_VERSINFO[0]:-0}" -lt 4 ] && [[ "$timeout" == *.* ]]; then
+    printf '1\n'
+    return 0
+  fi
+
+  printf '%s\n' "$timeout"
+}
+
 ui_init_terminal() {
   if [ "$UI_ACTIVE" -eq 1 ]; then
     return 0
@@ -30,19 +42,24 @@ ui_restore_terminal() {
 
 ui_read_key() {
   local timeout="${1:-0.2}"
+  local read_timeout
+  local seq_timeout
   local key
   local seq
 
-  IFS= read -rsn1 -t "$timeout" key || return 1
+  read_timeout="$(ui_read_timeout "$timeout")"
+  seq_timeout="$(ui_read_timeout "0.001")"
+
+  IFS= read -rsn1 -t "$read_timeout" key || return 1
 
   if [ "$key" = $'\x1b' ]; then
-    IFS= read -rsn1 -t 0.001 seq || {
+    IFS= read -rsn1 -t "$seq_timeout" seq || {
       printf 'ESC\n'
       return 0
     }
 
     if [ "$seq" = "[" ]; then
-      IFS= read -rsn1 -t 0.001 seq || {
+      IFS= read -rsn1 -t "$seq_timeout" seq || {
         printf 'ESC\n'
         return 0
       }
