@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+message_file="$1"
+subject_line="$(head -n 1 "$message_file")"
+pattern='^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(\([a-z0-9._/-]+\))?!?: .+'
+
+if [[ ! "$subject_line" =~ $pattern ]]; then
+  cat >&2 <<'EOF_MSG'
+Commit message must follow Conventional Commits.
+Example: feat(tui): add inspect view
+EOF_MSG
+  exit 1
+fi

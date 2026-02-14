@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  conventional-commits:
+    name: Conventional Commits
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: wagoid/commitlint-github-action@v6
+        with:
+          configFile: .commitlintrc.yml
+
+  lint:
+    name: Lint
+    runs-on: macos-13
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install lint tools
+        run: brew install shellcheck shfmt
+      - name: Shellcheck
+        run: shellcheck bin/gatan lib/gatan/*.sh scripts/*.sh test/helpers/*.bash
+      - name: shfmt check
+        run: shfmt -d -i 2 -ci bin/gatan lib/gatan/*.sh scripts/*.sh test/bats/*.bats test/helpers/*.bash
+      - name: Validate CLI version matches VERSION file
+        run: |
+          expected="$(tr -d '[:space:]' < VERSION)"
+          actual="$(bash bin/gatan --version)"
+          [ "$expected" = "$actual" ]
+
+  test:
+    name: Test
+    runs-on: macos-13
+    needs:
+      - lint
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install test tools
+        run: brew install bats-core
+      - name: Run bats
+        run: bats test/bats

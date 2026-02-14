@@ -1,0 +1,384 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+SCRIPT_DIR="${SCRIPT_PATH%/*}"
+if [ "$SCRIPT_DIR" = "$SCRIPT_PATH" ]; then
+  SCRIPT_DIR="."
+fi
+SCRIPT_DIR="$(cd "$SCRIPT_DIR" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# shellcheck source=lib/gatan/constants.sh
+. "$PROJECT_ROOT/lib/gatan/constants.sh"
+# shellcheck source=lib/gatan/core.sh
+. "$PROJECT_ROOT/lib/gatan/core.sh"
+# shellcheck source=lib/gatan/actions.sh
+. "$PROJECT_ROOT/lib/gatan/actions.sh"
+# shellcheck source=lib/gatan/ui.sh
+. "$PROJECT_ROOT/lib/gatan/ui.sh"
+
+APP_ROWS=()
+APP_SELECTED_INDEX=0
+APP_SCROLL_INDEX=0
+APP_STATUS_MESSAGE="Ready."
+APP_STATUS_EXPIRES_AT=0
+APP_INSPECT_PID=""
+APP_INSPECT_COMMAND=""
+APP_INSPECT_CONTENT=""
+APP_VIEW="main"
+APP_RUNNING=1
+APP_NEEDS_REDRAW=0
+SUDO_KEEPALIVE_PID=""
+
+app_print_help() {
+  cat <<'EOF_HELP'
+Usage: gatan [--help] [--version]
+
+Inspect TCP listening processes in a full-screen terminal UI.
+
+Options:
+  --help       Show this help message
+  --version    Show version
+EOF_HELP
+}
+
+app_set_status() {
+  local message="$1"
+  local ttl="${2:-$GATAN_STATUS_TTL_SECONDS}"
+
+  APP_STATUS_MESSAGE="$message"
+  APP_STATUS_EXPIRES_AT=$(($(date +%s) + ttl))
+}
+
+app_get_status_message() {
+  if [ "$APP_STATUS_EXPIRES_AT" -gt 0 ] && [ "$(date +%s)" -gt "$APP_STATUS_EXPIRES_AT" ]; then
+    APP_STATUS_MESSAGE="Ready."
+    APP_STATUS_EXPIRES_AT=0
+  fi
+
+  printf '%s\n' "$APP_STATUS_MESSAGE"
+}
+
+app_start_sudo_keepalive() {
+  (
+    while true; do
+      sleep "$GATAN_SUDO_KEEPALIVE_INTERVAL"
+      sudo -n true >/dev/null 2>&1 || exit 0
+    done
+  ) &
+  SUDO_KEEPALIVE_PID=$!
+}
+
+app_stop_sudo_keepalive() {
+  if [ -n "$SUDO_KEEPALIVE_PID" ]; then
+    kill "$SUDO_KEEPALIVE_PID" >/dev/null 2>&1 || true
+    wait "$SUDO_KEEPALIVE_PID" >/dev/null 2>&1 || true
+    SUDO_KEEPALIVE_PID=""
+  fi
+}
+
+app_cleanup() {
+  app_stop_sudo_keepalive
+  ui_restore_terminal
+}
+
+app_refresh_rows() {
+  local row
+
+  APP_ROWS=()
+  while IFS= read -r row; do
+    if [ -n "$row" ]; then
+      APP_ROWS+=("$row")
+    fi
+  done < <(core_collect_sorted_listeners || true)
+
+  if [ "${#APP_ROWS[@]}" -eq 0 ]; then
+    APP_SELECTED_INDEX=0
+    APP_SCROLL_INDEX=0
+    return 0
+  fi
+
+  if [ "$APP_SELECTED_INDEX" -ge "${#APP_ROWS[@]}" ]; then
+    APP_SELECTED_INDEX=$((${#APP_ROWS[@]} - 1))
+  fi
+
+  if [ "$APP_SELECTED_INDEX" -lt 0 ]; then
+    APP_SELECTED_INDEX=0
+  fi
+}
+
+app_selected_row() {
+  if [ "${#APP_ROWS[@]}" -eq 0 ]; then
+    return 1
+  fi
+
+  printf '%s\n' "${APP_ROWS[$APP_SELECTED_INDEX]}"
+}
+
+app_selected_pid() {
+  local row
+
+  row="$(app_selected_row)" || return 1
+  core_row_field "$row" 2
+}
+
+app_selected_command() {
+  local row
+
+  row="$(app_selected_row)" || return 1
+  core_row_field "$row" 1
+}
+
+app_table_height() {
+  local term_rows
+  local table_rows
+
+  term_rows="$(tput lines 2>/dev/null || printf '24')"
+  table_rows=$((term_rows - 6))
+  if [ "$table_rows" -lt 1 ]; then
+    table_rows=1
+  fi
+
+  printf '%s\n' "$table_rows"
+}
+
+app_adjust_scroll() {
+  local table_rows
+
+  table_rows="$(app_table_height)"
+
+  if [ "$APP_SELECTED_INDEX" -lt "$APP_SCROLL_INDEX" ]; then
+    APP_SCROLL_INDEX="$APP_SELECTED_INDEX"
+  fi
+
+  if [ "$APP_SELECTED_INDEX" -ge $((APP_SCROLL_INDEX + table_rows)) ]; then
+    APP_SCROLL_INDEX=$((APP_SELECTED_INDEX - table_rows + 1))
+  fi
+
+  if [ "$APP_SCROLL_INDEX" -lt 0 ]; then
+    APP_SCROLL_INDEX=0
+  fi
+}
+
+app_load_inspect() {
+  local pid="$1"
+
+  APP_INSPECT_CONTENT="$(actions_inspect "$pid" 2>/dev/null || true)"
+  if [ -z "$APP_INSPECT_CONTENT" ]; then
+    APP_INSPECT_CONTENT="Process $pid is no longer available."
+    return 1
+  fi
+
+  return 0
+}
+
+app_validate_sudo() {
+  if ! sudo -v >/dev/null 2>&1; then
+    printf 'Failed to authenticate with sudo.\n' >&2
+    return 1
+  fi
+
+  return 0
+}
+
+app_kill_pid() {
+  local pid="$1"
+  local command="$2"
+
+  if ! ui_prompt_yes_no "Terminate PID $pid ($command)? [y/N] "; then
+    app_set_status "Cancelled termination for PID $pid."
+    return 0
+  fi
+
+  if ! actions_send_signal TERM "$pid"; then
+    app_set_status "Failed to send SIGTERM to PID $pid."
+    return 1
+  fi
+
+  if actions_wait_for_exit "$pid"; then
+    app_set_status "Sent SIGTERM to PID $pid."
+    return 0
+  fi
+
+  if ! ui_prompt_yes_no "PID $pid still running. Force SIGKILL? [y/N] "; then
+    app_set_status "PID $pid is still running."
+    return 0
+  fi
+
+  if ! actions_send_signal KILL "$pid"; then
+    app_set_status "Failed to send SIGKILL to PID $pid."
+    return 1
+  fi
+
+  if actions_wait_for_exit "$pid" 5 "$GATAN_TERM_WAIT_INTERVAL"; then
+    app_set_status "Sent SIGKILL to PID $pid."
+    return 0
+  fi
+
+  app_set_status "SIGKILL sent but PID $pid still appears alive."
+  return 1
+}
+
+app_handle_main_key() {
+  local key="$1"
+  local pid
+  local command
+
+  case "$key" in
+    UP)
+      if [ "$APP_SELECTED_INDEX" -gt 0 ]; then
+        APP_SELECTED_INDEX=$((APP_SELECTED_INDEX - 1))
+      fi
+      ;;
+    DOWN)
+      if [ "$APP_SELECTED_INDEX" -lt $((${#APP_ROWS[@]} - 1)) ]; then
+        APP_SELECTED_INDEX=$((APP_SELECTED_INDEX + 1))
+      fi
+      ;;
+    ENTER)
+      if [ "${#APP_ROWS[@]}" -eq 0 ]; then
+        return 0
+      fi
+
+      pid="$(app_selected_pid || true)"
+      command="$(app_selected_command || true)"
+      if [ -z "$pid" ]; then
+        app_set_status "No process selected."
+        return 0
+      fi
+
+      APP_INSPECT_PID="$pid"
+      APP_INSPECT_COMMAND="$command"
+      app_load_inspect "$pid" || app_set_status "Process $pid is unavailable."
+      APP_VIEW="inspect"
+      ;;
+    K)
+      if [ "${#APP_ROWS[@]}" -eq 0 ]; then
+        app_set_status "No process selected."
+        return 0
+      fi
+
+      pid="$(app_selected_pid || true)"
+      command="$(app_selected_command || true)"
+      if [ -n "$pid" ]; then
+        app_kill_pid "$pid" "$command" || true
+        app_refresh_rows
+      fi
+      ;;
+    R)
+      app_refresh_rows
+      app_set_status "Refreshed listener list."
+      ;;
+    Q)
+      APP_RUNNING=0
+      ;;
+  esac
+}
+
+app_handle_inspect_key() {
+  local key="$1"
+
+  case "$key" in
+    B)
+      APP_VIEW="main"
+      app_refresh_rows
+      ;;
+    K)
+      if [ -n "$APP_INSPECT_PID" ]; then
+        app_kill_pid "$APP_INSPECT_PID" "$APP_INSPECT_COMMAND" || true
+        app_refresh_rows
+
+        if actions_pid_exists "$APP_INSPECT_PID"; then
+          app_load_inspect "$APP_INSPECT_PID" || true
+        else
+          APP_VIEW="main"
+        fi
+      fi
+      ;;
+    R)
+      if [ -n "$APP_INSPECT_PID" ]; then
+        app_load_inspect "$APP_INSPECT_PID" || app_set_status "Process $APP_INSPECT_PID is unavailable."
+      fi
+      ;;
+    Q)
+      APP_RUNNING=0
+      ;;
+  esac
+}
+
+app_run() {
+  local key
+
+  core_require_dependencies || return 1
+  app_validate_sudo || return 1
+  app_start_sudo_keepalive
+  app_refresh_rows
+
+  if [ "${GATAN_TEST_DISABLE_UI:-0}" = "1" ]; then
+    return 0
+  fi
+
+  ui_init_terminal
+  app_set_status "Loaded ${#APP_ROWS[@]} listening services."
+
+  while [ "$APP_RUNNING" -eq 1 ]; do
+    if [ "$APP_NEEDS_REDRAW" -eq 1 ]; then
+      APP_NEEDS_REDRAW=0
+    fi
+
+    app_adjust_scroll
+
+    if [ "$APP_VIEW" = "main" ]; then
+      ui_render_main "$APP_SELECTED_INDEX" "$APP_SCROLL_INDEX" "$(app_get_status_message)"
+    else
+      ui_render_inspect "$APP_INSPECT_PID" "$APP_INSPECT_COMMAND" "$(app_get_status_message)"
+    fi
+
+    key="$(ui_read_key 0.2 || true)"
+    if [ -z "$key" ]; then
+      continue
+    fi
+
+    if [ "$APP_VIEW" = "main" ]; then
+      app_handle_main_key "$key"
+    else
+      app_handle_inspect_key "$key"
+    fi
+  done
+
+  return 0
+}
+
+main() {
+  if [ "$#" -gt 1 ]; then
+    printf 'Too many arguments. Try: gatan --help\n' >&2
+    return 1
+  fi
+
+  case "${1:-}" in
+    "") ;;
+    --help | -h)
+      app_print_help
+      return 0
+      ;;
+    --version | -v)
+      gatan_version
+      return 0
+      ;;
+    *)
+      printf 'Unknown option: %s\n' "$1" >&2
+      printf 'Try: gatan --help\n' >&2
+      return 1
+      ;;
+  esac
+
+  app_run
+}
+
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  trap app_cleanup EXIT INT TERM
+  trap 'APP_NEEDS_REDRAW=1' WINCH
+  main "$@"
+fi
