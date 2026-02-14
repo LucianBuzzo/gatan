@@ -31,6 +31,37 @@ ui_term_code() {
   tput "$cap" "$@" 2>/dev/null || true
 }
 
+ui_is_positive_int() {
+  case "$1" in
+    '' | *[!0-9]* | 0) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+ui_get_terminal_size_into() {
+  local __rows_var="$1"
+  local __cols_var="$2"
+  local stty_size
+  local _ui_rows
+  local _ui_cols
+
+  stty_size="$(stty size 2>/dev/null || true)"
+  if [ -n "$stty_size" ]; then
+    _ui_rows="${stty_size%% *}"
+    _ui_cols="${stty_size##* }"
+  fi
+
+  if ! ui_is_positive_int "${_ui_rows:-}"; then
+    _ui_rows="$(tput lines 2>/dev/null || printf '24')"
+  fi
+  if ! ui_is_positive_int "${_ui_cols:-}"; then
+    _ui_cols="$(tput cols 2>/dev/null || printf '80')"
+  fi
+
+  printf -v "$__rows_var" '%s' "$_ui_rows"
+  printf -v "$__cols_var" '%s' "$_ui_cols"
+}
+
 ui_reset_frame_cache() {
   UI_FRAME_LINES=()
   UI_FRAME_WIDTH=0
@@ -307,7 +338,7 @@ ui_build_main_frame() {
   local term_cols
   local table_rows
   local total_rows
-  local frame_overhead=8
+  local frame_overhead="${GATAN_MAIN_FRAME_OVERHEAD:-8}"
   local port_w=6
   local pid_w=8
   local user_w=12
@@ -342,8 +373,7 @@ ui_build_main_frame() {
   local framed_line
   local base_fixed
 
-  term_rows="$(tput lines 2>/dev/null || printf '24')"
-  term_cols="$(tput cols 2>/dev/null || printf '80')"
+  ui_get_terminal_size_into term_rows term_cols
   if [ "$term_cols" -lt 4 ]; then
     term_cols=4
   fi
@@ -402,13 +432,15 @@ ui_build_main_frame() {
   ui_push_frame_line "${style_bold}${framed_line}${style_reset}"
 
   if [ "$total_rows" -eq 0 ]; then
-    ui_truncate_into line "No listening TCP processes found." "$inner_width"
-    ui_frame_line_into framed_line "$line" "$inner_width"
-    ui_push_frame_line "$framed_line"
-    for ((i = 1; i < table_rows; i++)); do
-      ui_frame_line_into framed_line "" "$inner_width"
+    if [ "$table_rows" -gt 0 ]; then
+      ui_truncate_into line "No listening TCP processes found." "$inner_width"
+      ui_frame_line_into framed_line "$line" "$inner_width"
       ui_push_frame_line "$framed_line"
-    done
+      for ((i = 1; i < table_rows; i++)); do
+        ui_frame_line_into framed_line "" "$inner_width"
+        ui_push_frame_line "$framed_line"
+      done
+    fi
   else
     for ((i = 0; i < table_rows; i++)); do
       row_index=$((scroll_index + i))
@@ -461,7 +493,8 @@ EOF_ROW
   fi
 
   for ((i = ${#UI_NEXT_LINES[@]}; i < term_rows; i++)); do
-    ui_push_frame_line ""
+    ui_frame_line_into framed_line "" "$inner_width"
+    ui_push_frame_line "$framed_line"
   done
 }
 
@@ -487,8 +520,7 @@ ui_build_inspect_frame() {
   local border_bottom
   local framed_line
 
-  term_rows="$(tput lines 2>/dev/null || printf '24')"
-  term_cols="$(tput cols 2>/dev/null || printf '80')"
+  ui_get_terminal_size_into term_rows term_cols
   if [ "$term_cols" -lt 4 ]; then
     term_cols=4
   fi
@@ -617,8 +649,7 @@ ui_prompt_yes_no() {
   local key
   local result=1
 
-  term_rows="$(tput lines 2>/dev/null || printf '24')"
-  term_cols="$(tput cols 2>/dev/null || printf '80')"
+  ui_get_terminal_size_into term_rows term_cols
 
   while true; do
     ui_term_emit cup "$((term_rows - 1))" 0

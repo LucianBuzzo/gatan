@@ -26,6 +26,58 @@ setup() {
   [ "$output" = "ENTER" ]
 }
 
+@test "ui_get_terminal_size_into prefers stty size" {
+  run env PROJECT_ROOT="$PROJECT_ROOT" bash -c '
+    source "$PROJECT_ROOT/lib/gatan/ui.sh"
+
+    stty() {
+      if [ "${1:-}" = "size" ]; then
+        printf "33 120\n"
+        return 0
+      fi
+      return 1
+    }
+
+    tput() {
+      case "$1" in
+        lines) printf "24\n" ;;
+        cols) printf "80\n" ;;
+        *) return 0 ;;
+      esac
+    }
+
+    ui_get_terminal_size_into rows cols
+    printf "%s %s\n" "$rows" "$cols"
+  '
+
+  [ "$status" -eq 0 ]
+  [ "$output" = "33 120" ]
+}
+
+@test "ui_get_terminal_size_into falls back to tput" {
+  run env PROJECT_ROOT="$PROJECT_ROOT" bash -c '
+    source "$PROJECT_ROOT/lib/gatan/ui.sh"
+
+    stty() {
+      return 1
+    }
+
+    tput() {
+      case "$1" in
+        lines) printf "44\n" ;;
+        cols) printf "132\n" ;;
+        *) return 0 ;;
+      esac
+    }
+
+    ui_get_terminal_size_into rows cols
+    printf "%s %s\n" "$rows" "$cols"
+  '
+
+  [ "$status" -eq 0 ]
+  [ "$output" = "44 132" ]
+}
+
 @test "ui_prompt_yes_no forces full redraw after response" {
   run env PROJECT_ROOT="$PROJECT_ROOT" bash -c '
     source "$PROJECT_ROOT/lib/gatan/ui.sh"
@@ -95,6 +147,66 @@ setup() {
 
   [ "$status" -eq 0 ]
   [[ "$output" == *"> 80"* ]]
+}
+
+@test "ui_build_main_frame fills full terminal dimensions" {
+  run env PROJECT_ROOT="$PROJECT_ROOT" bash -c '
+    source "$PROJECT_ROOT/lib/gatan/constants.sh"
+    source "$PROJECT_ROOT/lib/gatan/ui.sh"
+
+    APP_ROWS=($'\''node\t123\talice\t22u\t*:3000\t3000\t*\tTCP'\'')
+    APP_VERSION="0.1.0"
+
+    tput() {
+      case "$1" in
+        lines) printf "18\n" ;;
+        cols) printf "60\n" ;;
+        *) return 0 ;;
+      esac
+    }
+
+    ui_build_main_frame 0 0 "Ready."
+    printf "rows=%s\n" "${#UI_NEXT_LINES[@]}"
+
+    ok=1
+    for line in "${UI_NEXT_LINES[@]}"; do
+      clean="$(printf "%s" "$line" | sed -E "s/\x1B\\[[0-9;]*[A-Za-z]//g")"
+      if [ "${#clean}" -ne 60 ]; then
+        ok=0
+      fi
+    done
+    printf "width_ok=%s\n" "$ok"
+  '
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"rows=18"* ]]
+  [[ "$output" == *"width_ok=1"* ]]
+}
+
+@test "ui_build_main_frame keeps exact height when terminal is compact and no rows" {
+  run env PROJECT_ROOT="$PROJECT_ROOT" bash -c '
+    source "$PROJECT_ROOT/lib/gatan/constants.sh"
+    source "$PROJECT_ROOT/lib/gatan/ui.sh"
+
+    APP_ROWS=()
+    APP_VERSION="0.1.0"
+
+    tput() {
+      case "$1" in
+        lines) printf "8\n" ;;
+        cols) printf "40\n" ;;
+        *) return 0 ;;
+      esac
+    }
+
+    ui_build_main_frame 0 0 "Ready."
+    printf "rows=%s\n" "${#UI_NEXT_LINES[@]}"
+    printf "last=%s\n" "${UI_NEXT_LINES[7]}"
+  '
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"rows=8"* ]]
+  [[ "$output" == *"last=+--------------------------------------+"* ]]
 }
 
 @test "ui_render_inspect uses framed layout" {
