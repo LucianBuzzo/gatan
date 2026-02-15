@@ -18,6 +18,13 @@ UI_BORDER_BOTTOM_LEFT='+'
 UI_BORDER_BOTTOM_RIGHT='+'
 UI_BORDER_MID_LEFT='+'
 UI_BORDER_MID_RIGHT='+'
+UI_COLOR_ACCENT_FG=$'\033[38;2;42;161;152m'
+UI_COLOR_ACCENT_BG=$'\033[48;2;42;161;152m'
+UI_COLOR_TEXT_LIGHT=$'\033[38;2;253;246;227m'
+UI_COLOR_STATUS_FG=$'\033[38;2;147;161;161m'
+UI_COLOR_RESET_FG=$'\033[39m'
+UI_COLOR_RESET_BG=$'\033[49m'
+UI_COLOR_RESET_ALL=$'\033[0m'
 
 ui_term_emit() {
   local cap="$1"
@@ -327,7 +334,211 @@ ui_frame_line_into() {
   local padded
 
   ui_pad_to_width_into padded "$content" "$inner_width"
-  printf -v "$__var" '%s%s%s' "$UI_BORDER_V" "$padded" "$UI_BORDER_V"
+  printf -v "$__var" '%s%s%s%s%s%s%s' \
+    "$UI_COLOR_ACCENT_FG" "$UI_BORDER_V" "$UI_COLOR_RESET_FG" \
+    "$padded" \
+    "$UI_COLOR_ACCENT_FG" "$UI_BORDER_V" "$UI_COLOR_RESET_FG"
+}
+
+ui_content_line_into() {
+  local __var="$1"
+  local content="$2"
+  local width="$3"
+  local padded
+
+  ui_pad_to_width_into padded "$content" "$width"
+  printf -v "$__var" '%s' "$padded"
+}
+
+ui_style_status_line_into() {
+  local __var="$1"
+  local content="$2"
+  local width="$3"
+  local padded
+
+  ui_pad_to_width_into padded "$content" "$width"
+  printf -v "$__var" '%s%s%s' "$UI_COLOR_STATUS_FG" "$padded" "$UI_COLOR_RESET_FG"
+}
+
+ui_style_border_line_into() {
+  local __var="$1"
+  local line="$2"
+  printf -v "$__var" '%s%s%s' "$UI_COLOR_ACCENT_FG" "$line" "$UI_COLOR_RESET_FG"
+}
+
+ui_rule_line_into() {
+  local __var="$1"
+  local width="$2"
+  local rule
+
+  if [ "$width" -le 0 ]; then
+    printf -v "$__var" '%s' ""
+    return 0
+  fi
+
+  printf -v rule '%*s' "$width" ''
+  rule="${rule// /$UI_BORDER_H}"
+  printf -v "$__var" '%s' "$rule"
+}
+
+ui_label_border_line_into() {
+  local __var="$1"
+  local line="$2"
+  local label="$3"
+  local inset="${4:-3}"
+  local line_len
+  local label_text
+  local max_label
+  local suffix_start
+  local prefix
+  local suffix
+
+  line_len="${#line}"
+  if [ "$line_len" -le 0 ]; then
+    printf -v "$__var" '%s' "$line"
+    return 0
+  fi
+
+  if [ "$inset" -lt 1 ]; then
+    inset=1
+  fi
+  if [ "$inset" -ge "$line_len" ]; then
+    inset=$((line_len - 1))
+  fi
+
+  label_text=" ${label} "
+  max_label=$((line_len - inset - 1))
+  if [ "$max_label" -lt 0 ]; then
+    max_label=0
+  fi
+  ui_truncate_into label_text "$label_text" "$max_label"
+
+  prefix="${line:0:$inset}"
+  suffix_start=$((inset + ${#label_text}))
+  if [ "$suffix_start" -lt "$line_len" ]; then
+    suffix="${line:$suffix_start}"
+  else
+    suffix=""
+  fi
+
+  printf -v "$__var" '%s%s%s' "$prefix" "$label_text" "$suffix"
+}
+
+ui_bottom_link_line_into() {
+  local __var="$1"
+  local width="$2"
+  local line
+  local fill
+
+  if [ "$UI_BORDER_H" = '─' ]; then
+    fill='▄'
+    printf -v line '%*s' "$width" ''
+    line="${line// /$fill}"
+
+    # Keep terminal background untouched so only the lower half appears cyan.
+    printf -v "$__var" '%s%s%s' "$UI_COLOR_ACCENT_FG" "$line" "$UI_COLOR_RESET_ALL"
+    return 0
+  fi
+
+  ui_border_line_into line "$((width - 2))" bottom
+  ui_style_border_line_into "$__var" "$line"
+}
+
+ui_style_keybind_line_into() {
+  local __var="$1"
+  local content="$2"
+  local width="$3"
+  local middle
+  local middle_width
+  local left_infill
+  local right_infill
+  local styled_line
+
+  if [ "$width" -le 0 ]; then
+    printf -v "$__var" '%s' ""
+    return 0
+  fi
+
+  if [ "$width" -lt 4 ]; then
+    ui_truncate_into middle "$content" "$width"
+    ui_pad_to_width_into middle "$middle" "$width"
+    printf -v "$__var" '%s' "$middle"
+    return 0
+  fi
+
+  middle_width=$((width - 4))
+  ui_truncate_into middle "$content" "$middle_width"
+  ui_pad_to_width_into middle "$middle" "$middle_width"
+
+  left_infill=' '
+  right_infill=' '
+  if [ "$UI_BORDER_H" = '─' ]; then
+    left_infill='█'
+    right_infill='█'
+  fi
+
+  styled_line="${UI_COLOR_RESET_BG}${UI_COLOR_ACCENT_FG}${left_infill}${UI_COLOR_ACCENT_BG}${UI_COLOR_TEXT_LIGHT} ${middle} ${UI_COLOR_RESET_BG}${UI_COLOR_ACCENT_FG}${right_infill}${UI_COLOR_RESET_ALL}${UI_COLOR_RESET_FG}"
+  printf -v "$__var" '%s' "$styled_line"
+}
+
+ui_style_keybind_padding_line_into() {
+  local __var="$1"
+  local width="$2"
+  local fill
+  local line
+
+  if [ "$width" -le 0 ]; then
+    printf -v "$__var" '%s' ""
+    return 0
+  fi
+
+  if [ "$UI_BORDER_H" = '─' ]; then
+    fill='▀'
+    printf -v line '%*s' "$width" ''
+    line="${line// /$fill}"
+    printf -v "$__var" '%s%s%s' "$UI_COLOR_ACCENT_FG" "$line" "$UI_COLOR_RESET_ALL"
+    return 0
+  fi
+
+  printf -v line '%*s' "$width" ''
+  printf -v "$__var" '%s%s%s' "$UI_COLOR_ACCENT_BG" "$line" "$UI_COLOR_RESET_ALL"
+}
+
+ui_compose_keybind_content_into() {
+  local __var="$1"
+  local left_text="$2"
+  local right_text="$3"
+  local width="$4"
+  local out
+  local right_part
+  local left_part
+  local left_width
+  local remaining
+  local pad
+
+  if [ "$width" -le 0 ]; then
+    printf -v "$__var" '%s' ""
+    return 0
+  fi
+
+  ui_truncate_into right_part "$right_text" "$width"
+  if [ "${#right_part}" -ge "$width" ]; then
+    printf -v "$__var" '%s' "$right_part"
+    return 0
+  fi
+
+  remaining=$((width - ${#right_part}))
+  if [ -n "$left_text" ] && [ "$remaining" -gt 1 ]; then
+    left_width=$((remaining - 1))
+    ui_pad_to_width_into left_part "$left_text" "$left_width"
+    out="${left_part} ${right_part}"
+  else
+    printf -v pad '%*s' "$remaining" ''
+    out="${pad}${right_part}"
+  fi
+
+  ui_pad_to_width_into out "$out" "$width"
+  printf -v "$__var" '%s' "$out"
 }
 
 ui_build_main_frame() {
@@ -338,7 +549,8 @@ ui_build_main_frame() {
   local term_cols
   local table_rows
   local total_rows
-  local frame_overhead="${GATAN_MAIN_FRAME_OVERHEAD:-8}"
+  local frame_overhead_base="${GATAN_MAIN_FRAME_OVERHEAD:-6}"
+  local frame_overhead
   local port_w=6
   local pid_w=8
   local user_w=12
@@ -360,25 +572,32 @@ ui_build_main_frame() {
   local style_reset
   local style_rev
   local keys_line
+  local keybind_content
+  local key_pad_line
   local padded_marker
   local padded_port
   local padded_pid
   local padded_user
   local padded_command
   local padded_bind
-  local inner_width
-  local border_top
-  local border_mid
+  local content_width
   local border_bottom
   local framed_line
   local base_fixed
   local variable_w
+  local top_label
+  local show_keybind_padding=0
 
   ui_get_terminal_size_into term_rows term_cols
   if [ "$term_cols" -lt 4 ]; then
     term_cols=4
   fi
-  inner_width=$((term_cols - 2))
+  content_width="$term_cols"
+  frame_overhead="$frame_overhead_base"
+  if [ "$term_rows" -ge $((frame_overhead_base + 1)) ]; then
+    frame_overhead=$((frame_overhead_base + 1))
+    show_keybind_padding=1
+  fi
 
   table_rows=$((term_rows - frame_overhead))
   if [ "$table_rows" -lt 0 ]; then
@@ -386,7 +605,7 @@ ui_build_main_frame() {
   fi
 
   base_fixed=$((marker_w + port_w + pid_w + user_w + 5))
-  variable_w=$((inner_width - base_fixed))
+  variable_w=$((content_width - base_fixed))
   if [ "$variable_w" -le 0 ]; then
     command_w=0
     bind_w=0
@@ -419,22 +638,14 @@ ui_build_main_frame() {
   style_bold="$(ui_term_code bold)"
   style_reset="$(ui_term_code sgr0)"
   style_rev="$(ui_term_code rev)"
+  top_label="$GATAN_APP_NAME ${APP_VERSION:-$(gatan_version)}"
 
-  ui_border_line_into border_top "$inner_width" top
-  ui_border_line_into border_mid "$inner_width" mid
-  ui_border_line_into border_bottom "$inner_width" bottom
-  ui_push_frame_line "$border_top"
-
-  header_line="$GATAN_APP_NAME ${APP_VERSION:-$(gatan_version)} | TCP listeners: $total_rows"
-  ui_truncate_into header_line "$header_line" "$inner_width"
-  ui_frame_line_into framed_line "$header_line" "$inner_width"
+  header_line="  TCP listeners: $total_rows"
+  ui_truncate_into header_line "$header_line" "$content_width"
+  ui_content_line_into framed_line "$header_line" "$content_width"
   ui_push_frame_line "${style_bold}${framed_line}${style_reset}"
-
-  ui_truncate_into keys_line "Keys: Up/Down move  Enter inspect  k kill  r refresh  q quit" "$inner_width"
-  ui_frame_line_into framed_line "$keys_line" "$inner_width"
+  ui_content_line_into framed_line "" "$content_width"
   ui_push_frame_line "$framed_line"
-
-  ui_push_frame_line "$border_mid"
 
   ui_pad_into padded_marker "" "$marker_w"
   ui_pad_into padded_port "PORT" "$port_w"
@@ -443,17 +654,17 @@ ui_build_main_frame() {
   ui_pad_into padded_command "COMMAND" "$command_w"
   ui_pad_into padded_bind "BIND" "$bind_w"
   line="$padded_marker $padded_port $padded_pid $padded_user $padded_command $padded_bind"
-  ui_truncate_into line "$line" "$inner_width"
-  ui_frame_line_into framed_line "$line" "$inner_width"
+  ui_truncate_into line "$line" "$content_width"
+  ui_content_line_into framed_line "$line" "$content_width"
   ui_push_frame_line "${style_bold}${framed_line}${style_reset}"
 
   if [ "$total_rows" -eq 0 ]; then
     if [ "$table_rows" -gt 0 ]; then
-      ui_truncate_into line "No listening TCP processes found." "$inner_width"
-      ui_frame_line_into framed_line "$line" "$inner_width"
+      ui_truncate_into line "No listening TCP processes found." "$content_width"
+      ui_content_line_into framed_line "$line" "$content_width"
       ui_push_frame_line "$framed_line"
       for ((i = 1; i < table_rows; i++)); do
-        ui_frame_line_into framed_line "" "$inner_width"
+        ui_content_line_into framed_line "" "$content_width"
         ui_push_frame_line "$framed_line"
       done
     fi
@@ -461,7 +672,7 @@ ui_build_main_frame() {
     for ((i = 0; i < table_rows; i++)); do
       row_index=$((scroll_index + i))
       if [ "$row_index" -ge "$total_rows" ]; then
-        ui_frame_line_into framed_line "" "$inner_width"
+        ui_content_line_into framed_line "" "$content_width"
         ui_push_frame_line "$framed_line"
         continue
       fi
@@ -487,8 +698,8 @@ EOF_ROW
       ui_pad_into padded_command "$command" "$command_w"
       ui_pad_into padded_bind "$bind" "$bind_w"
       line="$padded_marker $padded_port $padded_pid $padded_user $padded_command $padded_bind"
-      ui_truncate_into line "$line" "$inner_width"
-      ui_frame_line_into framed_line "$line" "$inner_width"
+      ui_truncate_into line "$line" "$content_width"
+      ui_content_line_into framed_line "$line" "$content_width"
 
       if [ "$row_index" -eq "$selected_index" ]; then
         framed_line="${style_rev}${framed_line}${style_reset}"
@@ -498,18 +709,25 @@ EOF_ROW
     done
   fi
 
-  ui_push_frame_line "$border_mid"
-  ui_truncate_into line "$status_message" "$inner_width"
-  ui_frame_line_into framed_line "$line" "$inner_width"
+  ui_truncate_into line "  $status_message" "$content_width"
+  ui_style_status_line_into framed_line "$line" "$content_width"
   ui_push_frame_line "$framed_line"
+  ui_bottom_link_line_into border_bottom "$term_cols"
   ui_push_frame_line "$border_bottom"
+  ui_compose_keybind_content_into keybind_content "↑/↓ move | Enter inspect | k kill | r refresh | q quit" "$top_label" "$((term_cols - 4))"
+  ui_style_keybind_line_into keys_line "$keybind_content" "$term_cols"
+  ui_push_frame_line "$keys_line"
+  if [ "$show_keybind_padding" -eq 1 ]; then
+    ui_style_keybind_padding_line_into key_pad_line "$term_cols"
+    ui_push_frame_line "$key_pad_line"
+  fi
 
   if [ "${#UI_NEXT_LINES[@]}" -gt "$term_rows" ]; then
     UI_NEXT_LINES=("${UI_NEXT_LINES[@]:0:$term_rows}")
   fi
 
   for ((i = ${#UI_NEXT_LINES[@]}; i < term_rows; i++)); do
-    ui_frame_line_into framed_line "" "$inner_width"
+    ui_content_line_into framed_line "" "$content_width"
     ui_push_frame_line "$framed_line"
   done
 }
@@ -522,25 +740,39 @@ ui_build_inspect_frame() {
   local term_rows
   local term_cols
   local body_rows
-  local frame_overhead=7
+  local frame_overhead_base=5
+  local frame_overhead
   local i=0
   local line
   local header_line
   local style_bold
   local style_reset
   local keys_line
+  local keybind_content
+  local key_pad_line
   local truncated_command
-  local inner_width
-  local border_top
-  local border_mid
+  local app_label
+  local content_width
   local border_bottom
   local framed_line
+  local show_keybind_padding=0
+  local in_attr_block=1
+  local in_open_files_section=0
+  local line_text
+  local content_after_indent
+  local label
+  local tail
 
   ui_get_terminal_size_into term_rows term_cols
   if [ "$term_cols" -lt 4 ]; then
     term_cols=4
   fi
-  inner_width=$((term_cols - 2))
+  content_width="$term_cols"
+  frame_overhead="$frame_overhead_base"
+  if [ "$term_rows" -ge $((frame_overhead_base + 1)) ]; then
+    frame_overhead=$((frame_overhead_base + 1))
+    show_keybind_padding=1
+  fi
 
   body_rows=$((term_rows - frame_overhead))
   if [ "$body_rows" -lt 0 ]; then
@@ -553,23 +785,15 @@ ui_build_inspect_frame() {
 
   style_bold="$(ui_term_code bold)"
   style_reset="$(ui_term_code sgr0)"
-
-  ui_border_line_into border_top "$inner_width" top
-  ui_border_line_into border_mid "$inner_width" mid
-  ui_border_line_into border_bottom "$inner_width" bottom
-  ui_push_frame_line "$border_top"
+  app_label="$GATAN_APP_NAME ${APP_VERSION:-$(gatan_version)}"
 
   ui_truncate_into truncated_command "$command" 40
-  header_line="Inspect PID $pid ($truncated_command)"
-  ui_truncate_into header_line "$header_line" "$inner_width"
-  ui_frame_line_into framed_line "$header_line" "$inner_width"
+  header_line="  Inspect PID $pid ($truncated_command)"
+  ui_truncate_into header_line "$header_line" "$content_width"
+  ui_content_line_into framed_line "$header_line" "$content_width"
   ui_push_frame_line "${style_bold}${framed_line}${style_reset}"
-
-  ui_truncate_into keys_line "Keys: b back  k kill  r refresh  q quit" "$inner_width"
-  ui_frame_line_into framed_line "$keys_line" "$inner_width"
+  ui_content_line_into framed_line "" "$content_width"
   ui_push_frame_line "$framed_line"
-
-  ui_push_frame_line "$border_mid"
 
   if [ -z "$content" ]; then
     content='No process details available.'
@@ -580,8 +804,30 @@ ui_build_inspect_frame() {
       break
     fi
 
-    ui_truncate_into line "$line" "$inner_width"
-    ui_frame_line_into framed_line "$line" "$inner_width"
+    line_text="  $line"
+    ui_truncate_into line_text "$line_text" "$content_width"
+    ui_content_line_into framed_line "$line_text" "$content_width"
+
+    if [ "$in_attr_block" -eq 1 ]; then
+      if [ -z "$line" ]; then
+        in_attr_block=0
+      else
+        content_after_indent="${framed_line:2}"
+        label="${content_after_indent%%[[:space:]]*}"
+        if [ -n "$label" ] && [ "$label" != "$content_after_indent" ]; then
+          tail="${content_after_indent:${#label}}"
+          framed_line="  ${style_bold}${label}${style_reset}${tail}"
+        fi
+      fi
+    fi
+
+    if [[ "$line" == Open\ files\ \(first* ]]; then
+      in_open_files_section=1
+    elif [ "$in_open_files_section" -eq 1 ] && [[ "$line" == COMMAND* ]]; then
+      framed_line="${style_bold}${framed_line}${style_reset}"
+      in_open_files_section=0
+    fi
+
     ui_push_frame_line "$framed_line"
     i=$((i + 1))
   done <<EOF_CONTENT
@@ -589,22 +835,30 @@ $content
 EOF_CONTENT
 
   for (( ; i < body_rows; i++)); do
-    ui_frame_line_into framed_line "" "$inner_width"
+    ui_content_line_into framed_line "" "$content_width"
     ui_push_frame_line "$framed_line"
   done
 
-  ui_push_frame_line "$border_mid"
-  ui_truncate_into line "$status_message" "$inner_width"
-  ui_frame_line_into framed_line "$line" "$inner_width"
+  ui_truncate_into line "  $status_message" "$content_width"
+  ui_style_status_line_into framed_line "$line" "$content_width"
   ui_push_frame_line "$framed_line"
+  ui_bottom_link_line_into border_bottom "$term_cols"
   ui_push_frame_line "$border_bottom"
+  ui_compose_keybind_content_into keybind_content "b back | k kill | r refresh | q quit" "$app_label" "$((term_cols - 4))"
+  ui_style_keybind_line_into keys_line "$keybind_content" "$term_cols"
+  ui_push_frame_line "$keys_line"
+  if [ "$show_keybind_padding" -eq 1 ]; then
+    ui_style_keybind_padding_line_into key_pad_line "$term_cols"
+    ui_push_frame_line "$key_pad_line"
+  fi
 
   if [ "${#UI_NEXT_LINES[@]}" -gt "$term_rows" ]; then
     UI_NEXT_LINES=("${UI_NEXT_LINES[@]:0:$term_rows}")
   fi
 
   for ((i = ${#UI_NEXT_LINES[@]}; i < term_rows; i++)); do
-    ui_push_frame_line ""
+    ui_content_line_into line "" "$content_width"
+    ui_push_frame_line "$line"
   done
 }
 

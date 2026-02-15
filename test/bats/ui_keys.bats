@@ -188,6 +188,96 @@ setup() {
   [ "$output" = "<abc~>" ]
 }
 
+@test "ui_style_keybind_line_into applies cyan background when available" {
+  run env PROJECT_ROOT="$PROJECT_ROOT" bash -c '
+    source "$PROJECT_ROOT/lib/gatan/ui.sh"
+    UI_BORDER_H="─"
+
+    ui_style_keybind_line_into out "keys" 8
+    clean="$(printf "%s" "$out" | sed -E "s/\x1B\\[[0-9;]*[A-Za-z]//g")"
+    has_fg=0
+    has_bg=0
+    has_text=0
+    [[ "$out" == *$'\''\033[38;2;42;161;152m'\''* ]] && has_fg=1
+    [[ "$out" == *$'\''\033[48;2;42;161;152m'\''* ]] && has_bg=1
+    [[ "$out" == *$'\''\033[38;2;253;246;227m'\''* ]] && has_text=1
+    printf "has_fg=%s\n" "$has_fg"
+    printf "has_bg=%s\n" "$has_bg"
+    printf "has_text=%s\n" "$has_text"
+    printf "clean=<%s>\n" "$clean"
+  '
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"has_fg=1"* ]]
+  [[ "$output" == *"has_bg=1"* ]]
+  [[ "$output" == *"has_text=1"* ]]
+  [[ "$output" == *"clean=<█ keys █>"* ]]
+}
+
+@test "ui_style_keybind_padding_line_into renders cyan upper half blocks" {
+  run env PROJECT_ROOT="$PROJECT_ROOT" bash -c '
+    source "$PROJECT_ROOT/lib/gatan/ui.sh"
+    UI_BORDER_H="─"
+
+    ui_style_keybind_padding_line_into out 8
+    clean="$(printf "%s" "$out" | sed -E "s/\x1B\\[[0-9;]*[A-Za-z]//g")"
+    has_fg=0
+    has_bg=0
+    [[ "$out" == *$'\''\033[38;2;42;161;152m'\''* ]] && has_fg=1
+    [[ "$out" == *$'\''\033[48;2;42;161;152m'\''* ]] && has_bg=1
+    printf "has_fg=%s\n" "$has_fg"
+    printf "has_bg=%s\n" "$has_bg"
+    printf "clean=<%s>\n" "$clean"
+  '
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"has_fg=1"* ]]
+  [[ "$output" == *"has_bg=0"* ]]
+  [[ "$output" == *"clean=<▀▀▀▀▀▀▀▀>"* ]]
+}
+
+@test "ui_style_status_line_into applies lighter status foreground" {
+  run env PROJECT_ROOT="$PROJECT_ROOT" bash -c '
+    source "$PROJECT_ROOT/lib/gatan/ui.sh"
+
+    ui_style_status_line_into out "Ready." 8
+    clean="$(printf "%s" "$out" | sed -E "s/\x1B\\[[0-9;]*[A-Za-z]//g")"
+    has_status_fg=0
+    [[ "$out" == *$'\''\033[38;2;147;161;161m'\''* ]] && has_status_fg=1
+    printf "has_status_fg=%s\n" "$has_status_fg"
+    printf "clean=<%s>\n" "$clean"
+  '
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"has_status_fg=1"* ]]
+  [[ "$output" == *"clean=<Ready.  >"* ]]
+}
+
+@test "ui_bottom_link_line_into keeps default background in unicode mode" {
+  run env PROJECT_ROOT="$PROJECT_ROOT" bash -c '
+    source "$PROJECT_ROOT/lib/gatan/ui.sh"
+
+    UI_BORDER_H="─"
+    UI_BORDER_BOTTOM_LEFT="└"
+    UI_BORDER_BOTTOM_RIGHT="┘"
+
+    ui_bottom_link_line_into out 8
+    clean="$(printf "%s" "$out" | sed -E "s/\x1B\\[[0-9;]*[A-Za-z]//g")"
+    has_fg=0
+    has_bg=0
+    [[ "$out" == *$'\''\033[38;2;42;161;152m'\''* ]] && has_fg=1
+    [[ "$out" == *$'\''\033[48;2;42;161;152m'\''* ]] && has_bg=1
+    printf "has_fg=%s\n" "$has_fg"
+    printf "has_bg=%s\n" "$has_bg"
+    printf "clean=<%s>\n" "$clean"
+  '
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"has_fg=1"* ]]
+  [[ "$output" == *"has_bg=0"* ]]
+  [[ "$output" == *"clean=<▄▄▄▄▄▄▄▄>"* ]]
+}
+
 @test "ui_render_main includes selected row marker" {
   run env PROJECT_ROOT="$PROJECT_ROOT" bash -c '
     source "$PROJECT_ROOT/lib/gatan/constants.sh"
@@ -251,7 +341,14 @@ setup() {
     }
 
     ui_build_main_frame 1 0 "Ready."
-    row="${UI_NEXT_LINES[5]}"
+    row=""
+    for line in "${UI_NEXT_LINES[@]}"; do
+      clean_line="$(printf "%s" "$line" | sed -E "s/\x1B\\[[0-9;]*[A-Za-z]//g")"
+      if [[ "$clean_line" == *"super-super-long-command"* ]]; then
+        row="$line"
+        break
+      fi
+    done
     clean="$(printf "%s" "$row" | sed -E "s/\x1B\\[[0-9;]*[A-Za-z]//g")"
     tildes="$(printf "%s" "$clean" | awk -F"~" "{print NF-1}")"
 
@@ -289,13 +386,18 @@ setup() {
       if [ "${#clean}" -ne 60 ]; then
         ok=0
       fi
+      if [[ "$clean" == *"gatan 0.1.0"* ]]; then
+        has_label=1
+      fi
     done
     printf "width_ok=%s\n" "$ok"
+    printf "has_label=%s\n" "${has_label:-0}"
   '
 
   [ "$status" -eq 0 ]
   [[ "$output" == *"rows=18"* ]]
   [[ "$output" == *"width_ok=1"* ]]
+  [[ "$output" == *"has_label=1"* ]]
 }
 
 @test "ui_build_main_frame keeps exact height when terminal is compact and no rows" {
@@ -316,12 +418,16 @@ setup() {
 
     ui_build_main_frame 0 0 "Ready."
     printf "rows=%s\n" "${#UI_NEXT_LINES[@]}"
-    printf "last=%s\n" "${UI_NEXT_LINES[7]}"
+    clean_border="$(printf "%s" "${UI_NEXT_LINES[5]}" | sed -E "s/\x1B\\[[0-9;]*[A-Za-z]//g")"
+    printf "border=%s\n" "$clean_border"
+    clean_last="$(printf "%s" "${UI_NEXT_LINES[6]}" | sed -E "s/\x1B\\[[0-9;]*[A-Za-z]//g")"
+    printf "last=%s\n" "$clean_last"
   '
 
   [ "$status" -eq 0 ]
   [[ "$output" == *"rows=8"* ]]
-  [[ "$output" == *"last=+--------------------------------------+"* ]]
+  [[ "$output" == *"border=+--------------------------------------+"* ]]
+  [[ "$output" == *"last=  ↑/↓ move | Enter inspec~ gatan 0.1.0"* ]]
 }
 
 @test "ui_render_inspect uses framed layout" {
@@ -338,15 +444,61 @@ setup() {
       esac
     }
 
-    ui_render_inspect 123 "node server.js" "Ready."
+    ui_build_inspect_frame 123 "node server.js" "Ready."
+    for idx in 0 1 2 8 10; do
+      clean="$(printf "%s" "${UI_NEXT_LINES[$idx]}" | sed -E "s/\x1B\\[[0-9;]*[A-Za-z]//g")"
+      printf "line%s=<%s>\n" "$idx" "$clean"
+    done
   '
 
   [ "$status" -eq 0 ]
-  [[ "$output" == *"+------------------------------------------------+"* ]]
-  [[ "$output" == *"|Inspect PID 123 (node server.js)"* ]]
-  [[ "$output" == *"|Keys: b back  k kill  r refresh  q quit"* ]]
-  [[ "$output" == *"|cwd: /tmp"* ]]
-  [[ "$output" == *"|Ready."* ]]
+  [[ "$output" == *"line0=<  Inspect PID 123 (node server.js)"* ]]
+  [[ "$output" == *"line1=<                                                  >"* ]]
+  [[ "$output" == *"line2=<  cwd: /tmp"* ]]
+  [[ "$output" == *"line8=<  Ready."* ]]
+  [[ "$output" == *"line10=<"* ]]
+  [[ "$output" == *"b back | k kill | r refresh | q quit"* ]]
+}
+
+@test "ui_build_inspect_frame bolds top labels and open-files header" {
+  run env PROJECT_ROOT="$PROJECT_ROOT" bash -c '
+    source "$PROJECT_ROOT/lib/gatan/ui.sh"
+
+    APP_INSPECT_CONTENT=$'\''PID      123\nPPID     1\nUSER     alice\nCOMMAND  /usr/bin/node\nCWD      /tmp\n\nOpen files (first 20):\nCOMMAND PID USER FD\nnode 123 alice cwd'\''
+
+    tput() {
+      case "$1" in
+        lines) printf "18\n" ;;
+        cols) printf "80\n" ;;
+        bold) printf "\033[1m" ;;
+        sgr0) printf "\033[0m" ;;
+        *) return 0 ;;
+      esac
+    }
+
+    ui_build_inspect_frame 123 "node server.js" "Ready."
+
+    pid_line=""
+    header_line=""
+    for idx in "${!UI_NEXT_LINES[@]}"; do
+      clean="$(printf "%s" "${UI_NEXT_LINES[$idx]}" | sed -E "s/\x1B\\[[0-9;]*[A-Za-z]//g")"
+      case "$clean" in
+        "  PID"*) pid_line="${UI_NEXT_LINES[$idx]}" ;;
+        "  COMMAND PID USER FD"*) header_line="${UI_NEXT_LINES[$idx]}" ;;
+      esac
+    done
+
+    has_pid_bold=0
+    has_header_bold=0
+    [[ "$pid_line" == *$'\''\033[1m'\''* ]] && has_pid_bold=1
+    [[ "$header_line" == *$'\''\033[1m'\''* ]] && has_header_bold=1
+    printf "pid_bold=%s\n" "$has_pid_bold"
+    printf "header_bold=%s\n" "$has_header_bold"
+  '
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"pid_bold=1"* ]]
+  [[ "$output" == *"header_bold=1"* ]]
 }
 
 @test "ui_paint_frame updates only changed rows in incremental mode" {

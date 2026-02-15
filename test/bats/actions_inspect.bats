@@ -56,10 +56,10 @@ EOF_LSOF
   '
 
   [ "$status" -eq 0 ]
-  assert_contains "$output" "PID: 123"
-  assert_contains "$output" "PPID: 1"
-  assert_contains "$output" "USER: alice"
-  assert_contains "$output" "COMMAND: /usr/bin/node /Users/alice/app/server.js"
-  assert_contains "$output" "CWD: /Users/alice/app"
+  assert_contains "$output" "PID      123"
+  assert_contains "$output" "PPID     1"
+  assert_contains "$output" "USER     alice"
+  assert_contains "$output" "COMMAND  /usr/bin/node /Users/alice/app/server.js"
+  assert_contains "$output" "CWD      /Users/alice/app"
   assert_contains "$output" "Open files (first"
 }

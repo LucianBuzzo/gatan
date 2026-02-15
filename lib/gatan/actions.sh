@@ -68,11 +68,11 @@ EOF_SUMMARY
   cwd="$(actions_get_cwd "$pid")"
   open_files="$(actions_get_open_files "$pid")"
 
-  printf 'PID: %s\n' "$info_pid"
-  printf 'PPID: %s\n' "$info_ppid"
-  printf 'USER: %s\n' "$info_user"
-  printf 'COMMAND: %s\n' "$info_command"
-  printf 'CWD: %s\n' "$cwd"
+  printf '%-8s %s\n' "PID" "$info_pid"
+  printf '%-8s %s\n' "PPID" "$info_ppid"
+  printf '%-8s %s\n' "USER" "$info_user"
+  printf '%-8s %s\n' "COMMAND" "$info_command"
+  printf '%-8s %s\n' "CWD" "$cwd"
   printf '\nOpen files (first %s):\n' "$GATAN_OPEN_FILES_LIMIT"
 
   if [ -n "$open_files" ]; then

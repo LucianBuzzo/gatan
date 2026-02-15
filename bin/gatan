@@ -167,9 +167,15 @@ app_table_height() {
   local term_rows
   local term_cols
   local table_rows
+  local frame_overhead
 
   ui_get_terminal_size_into term_rows term_cols
-  table_rows=$((term_rows - ${GATAN_MAIN_FRAME_OVERHEAD:-8}))
+  frame_overhead="${GATAN_MAIN_FRAME_OVERHEAD:-6}"
+  if [ "$term_rows" -ge $((frame_overhead + 1)) ]; then
+    frame_overhead=$((frame_overhead + 1))
+  fi
+
+  table_rows=$((term_rows - frame_overhead))
   if [ "$table_rows" -lt 1 ]; then
     table_rows=1
   fi
