@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.0](https://github.com/LucianBuzzo/gatan/compare/gatan-v0.2.0...gatan-v0.3.0) (2026-02-15)
+
+
+### Features
+
+* **inspect:** merge live metrics into primary detail table ([851821b](https://github.com/LucianBuzzo/gatan/commit/851821b79c43f03e954f74e712cca1cd7a4c6144))
+
+
+### Performance Improvements
+
+* **tui:** improve input latency and async refresh pipeline ([9912061](https://github.com/LucianBuzzo/gatan/commit/99120611f257463d4f76e2ee1e8a5d0c1e9413c8))
+
 ## [0.2.0](https://github.com/LucianBuzzo/gatan/compare/gatan-v0.1.0...gatan-v0.2.0) (2026-02-15)
 
 

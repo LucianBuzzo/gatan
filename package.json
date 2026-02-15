@@ -1,6 +1,6 @@
 {
   "name": "lucianbuzzo/gatan",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "repo": "lucianbuzzo/gatan",
   "description": "macOS Bash TUI for inspecting listening TCP ports and processes",
   "license": "MIT",
