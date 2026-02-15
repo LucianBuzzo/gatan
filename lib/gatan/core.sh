@@ -19,7 +19,8 @@ core_require_dependencies() {
 }
 
 core_raw_lsof() {
-  sudo lsof -nP -iTCP -sTCP:LISTEN 2>/dev/null
+  # `+c 0` asks lsof for full command names (no default 9-char truncation).
+  sudo lsof +c 0 -nP -iTCP -sTCP:LISTEN 2>/dev/null
 }
 
 # Emit normalized listener rows as tab-delimited fields:
