@@ -25,10 +25,12 @@ EOF_SUDO
 
   write_mock ps <<'EOF_PS'
 #!/usr/bin/env bash
-if [ "${1:-}" = "-o" ] && [ "${2:-}" = "%cpu=" ]; then
-  echo "42.7"
-  exit 0
-fi
+case " $* " in
+  *" %mem= "*)
+    echo "123 1 alice 42.7 0.1 2048 4096 00:10:00 R /usr/bin/node /Users/alice/app/server.js"
+    exit 0
+    ;;
+esac
 
 echo "123 1 alice /usr/bin/node /Users/alice/app/server.js"
 EOF_PS
@@ -54,15 +56,6 @@ OUT
 fi
 EOF_LSOF
 
-  write_mock top <<'EOF_TOP'
-#!/usr/bin/env bash
-cat <<'OUT'
-Processes: 1 total
-PID COMMAND      %CPU MEM   TIME   THR STATE
-123 node          0.0  20M 0:01.23 7   running
-OUT
-EOF_TOP
-
   run env PATH="$MOCK_BIN:$PATH" PROJECT_ROOT="$PROJECT_ROOT" bash -c '
     source "$PROJECT_ROOT/lib/gatan/constants.sh"
     source "$PROJECT_ROOT/lib/gatan/actions.sh"
@@ -76,9 +69,9 @@ EOF_TOP
   assert_contains "$output" "COMMAND  /usr/bin/node /Users/alice/app/server.js"
   assert_contains "$output" "CWD      /Users/alice/app"
   assert_contains "$output" "Open files (first"
-  assert_contains "$output" "Top snapshot (PID 123):"
+  assert_contains "$output" "Live metrics (PID 123):"
   assert_contains "$output" "PID         123"
-  assert_contains "$output" "COMMAND     node"
+  assert_contains "$output" "COMMAND     /usr/bin/node /Users/alice/app/server.js"
   assert_contains "$output" "CPU         42.7"
-  [[ "$output" != *"PID COMMAND      %CPU MEM   TIME   THR STATE"* ]]
+  assert_contains "$output" "MEM         0.1"
 }

@@ -516,7 +516,7 @@ setup() {
   run env PROJECT_ROOT="$PROJECT_ROOT" bash -c '
     source "$PROJECT_ROOT/lib/gatan/ui.sh"
 
-    APP_INSPECT_CONTENT=$'\''PID      123\nPPID     1\nUSER     alice\nCOMMAND  /usr/bin/node\nCWD      /tmp\n\nOpen files (first 20):\nCOMMAND PID USER FD\nnode 123 alice cwd\n\nTop snapshot (PID 123):\nPID         123\nCOMMAND     node\nCPU         0.0\nMEM         20M'\''
+    APP_INSPECT_CONTENT=$'\''PID      123\nPPID     1\nUSER     alice\nCOMMAND  /usr/bin/node\nCWD      /tmp\n\nOpen files (first 20):\nCOMMAND PID USER FD\nnode 123 alice cwd\n\nLive metrics (PID 123):\nPID         123\nCOMMAND     node\nCPU         0.0\nMEM         20M'\''
 
     tput() {
       case "$1" in

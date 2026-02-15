@@ -128,7 +128,7 @@ setup() {
   [[ "$output" == *"rc=0 prompted=1"* ]]
 }
 
-@test "app_load_inspect returns quickly with loading top snapshot" {
+@test "app_load_inspect returns quickly with loading live metrics" {
   run env PROJECT_ROOT="$PROJECT_ROOT" bash -c '
     source "$PROJECT_ROOT/bin/gatan"
 
@@ -136,9 +136,9 @@ setup() {
     actions_inspect_static() {
       printf "PID      123\n"
     }
-    actions_get_top_snapshot() {
+    actions_get_live_metrics_snapshot() {
       sleep 0.2
-      printf "PID COMMAND %%CPU MEM\n123 node 0.0 20M\n"
+      printf "PID 123\nCPU 1.0\n"
     }
 
     app_load_inspect "123"
@@ -166,8 +166,8 @@ setup() {
     actions_inspect_static() {
       printf "PID      123\n"
     }
-    actions_get_top_snapshot() {
-      printf "PID COMMAND %%CPU MEM\n123 node 0.0 20M\n"
+    actions_get_live_metrics_snapshot() {
+      printf "PID 123\nCPU 1.0\n"
     }
 
     app_load_inspect "123"
@@ -180,7 +180,7 @@ setup() {
     done
 
     has_snapshot=0
-    [[ "$APP_INSPECT_CONTENT" == *"PID COMMAND %CPU MEM"* ]] && has_snapshot=1
+    [[ "$APP_INSPECT_CONTENT" == *"CPU 1.0"* ]] && has_snapshot=1
     job_done=0
     if [ -z "$APP_INSPECT_TOP_JOB_PID" ]; then
       job_done=1
@@ -191,4 +191,52 @@ setup() {
 
   [ "$status" -eq 0 ]
   [[ "$output" == *"job_done=1 snapshot=1"* ]]
+}
+
+@test "app_request_main_refresh starts async job and sets notify flag" {
+  run env PROJECT_ROOT="$PROJECT_ROOT" bash -c '
+    source "$PROJECT_ROOT/bin/gatan"
+
+    core_collect_sorted_listeners() {
+      printf "node\t123\talice\t22u\t*:3000\t3000\t*\tTCP\n"
+    }
+
+    app_request_main_refresh 1
+    has_job=0
+    if [ -n "$APP_MAIN_REFRESH_JOB_PID" ]; then
+      has_job=1
+    fi
+    printf "has_job=%s notify=%s\n" "$has_job" "$APP_MAIN_REFRESH_NOTIFY_ON_COMPLETE"
+    app_stop_main_refresh
+  '
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"has_job=1 notify=1"* ]]
+}
+
+@test "app_poll_main_refresh applies rows and emits completion status" {
+  run env PROJECT_ROOT="$PROJECT_ROOT" bash -c '
+    source "$PROJECT_ROOT/bin/gatan"
+
+    core_collect_sorted_listeners() {
+      printf "node\t123\talice\t22u\t*:3000\t3000\t*\tTCP\n"
+    }
+
+    APP_ROWS=($'\''old\t1\troot\t1u\t*:1\t1\t*\tTCP'\'')
+    app_request_main_refresh 1
+
+    for _ in 1 2 3 4 5; do
+      app_poll_main_refresh "$(app_now_millis)" || true
+      if [ -z "$APP_MAIN_REFRESH_JOB_PID" ]; then
+        break
+      fi
+      sleep 0.05
+    done
+
+    printf "rows=%s status=%s\n" "${#APP_ROWS[@]}" "$APP_STATUS_MESSAGE"
+    app_stop_main_refresh
+  '
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"rows=1 status=Refreshed listener list."* ]]
 }

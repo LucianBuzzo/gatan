@@ -29,13 +29,43 @@ UI_COLOR_RESET_ALL=$'\033[0m'
 ui_term_emit() {
   local cap="$1"
   shift
-  tput "$cap" "$@" 2>/dev/null || true
+
+  case "$cap" in
+    cup)
+      # ANSI cursor addressing is 1-based.
+      printf '\033[%s;%sH' "$(($1 + 1))" "$(($2 + 1))"
+      ;;
+    el)
+      printf '\033[2K'
+      ;;
+    smcup)
+      printf '\033[?1049h'
+      ;;
+    rmcup)
+      printf '\033[?1049l'
+      ;;
+    civis)
+      printf '\033[?25l'
+      ;;
+    cnorm)
+      printf '\033[?25h'
+      ;;
+    *)
+      tput "$cap" "$@" 2>/dev/null || true
+      ;;
+  esac
 }
 
 ui_term_code() {
   local cap="$1"
   shift
-  tput "$cap" "$@" 2>/dev/null || true
+
+  case "$cap" in
+    bold) printf '\033[1m' ;;
+    sgr0) printf '\033[0m' ;;
+    rev) printf '\033[7m' ;;
+    *) tput "$cap" "$@" 2>/dev/null || true ;;
+  esac
 }
 
 ui_is_positive_int() {
@@ -123,6 +153,8 @@ ui_read_timeout() {
 
   # macOS system bash 3.2 only accepts integer read timeouts.
   if [ "${BASH_VERSINFO[0]:-0}" -lt 4 ] && [[ "$timeout" == *.* ]]; then
+    # Keep behavior functional on bash 3.2 by rounding any fractional wait up
+    # to 1 second (bash 3.2 cannot honor sub-second timeouts).
     printf '1\n'
     return 0
   fi
@@ -169,22 +201,22 @@ ui_read_key() {
   local timeout="${1:-0.2}"
   local read_timeout
   local seq_timeout
-  local key
-  local seq
+  local key=""
+  local seq=""
 
   read_timeout="$(ui_read_timeout "$timeout")"
   seq_timeout="$(ui_read_timeout "0.001")"
 
-  IFS= read -rsn1 -t "$read_timeout" key || return 1
+  IFS= read -rsn1 -d '' -t "$read_timeout" key || return 1
 
   if [ "$key" = $'\x1b' ]; then
-    IFS= read -rsn1 -t "$seq_timeout" seq || {
+    IFS= read -rsn1 -d '' -t "$seq_timeout" seq || {
       printf 'ESC\n'
       return 0
     }
 
     if [ "$seq" = "[" ]; then
-      IFS= read -rsn1 -t "$seq_timeout" seq || {
+      IFS= read -rsn1 -d '' -t "$seq_timeout" seq || {
         printf 'ESC\n'
         return 0
       }
@@ -204,7 +236,7 @@ ui_read_key() {
   fi
 
   case "$key" in
-    "" | $'\n' | $'\r') printf 'ENTER\n' ;;
+    $'\n' | $'\r') printf 'ENTER\n' ;;
     q | Q) printf 'Q\n' ;;
     r | R) printf 'R\n' ;;
     k | K) printf 'K\n' ;;
@@ -822,7 +854,7 @@ ui_build_inspect_frame() {
       fi
     fi
 
-    if [[ "$line" == Top\ snapshot\ \(PID* ]]; then
+    if [[ "$line" == Live\ metrics\ \(PID* ]]; then
       in_top_section=1
     elif [ "$in_top_section" -eq 1 ] && [ -n "$line" ]; then
       content_after_indent="${framed_line:2}"

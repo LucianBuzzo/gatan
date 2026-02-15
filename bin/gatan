@@ -33,6 +33,10 @@ APP_INSPECT_TOP_CONTENT=""
 APP_INSPECT_TOP_NEXT_AT=0
 APP_INSPECT_TOP_JOB_PID=""
 APP_INSPECT_TOP_JOB_FILE=""
+APP_MAIN_REFRESH_NEXT_AT=0
+APP_MAIN_REFRESH_JOB_PID=""
+APP_MAIN_REFRESH_JOB_FILE=""
+APP_MAIN_REFRESH_NOTIFY_ON_COMPLETE=0
 APP_VIEW="main"
 APP_RUNNING=1
 APP_NEEDS_REDRAW=0
@@ -57,9 +61,11 @@ EOF_HELP
 app_set_status() {
   local message="$1"
   local ttl="${2:-$GATAN_STATUS_TTL_SECONDS}"
+  local now_ms
 
+  now_ms="$(app_now_millis)"
   APP_STATUS_MESSAGE="$message"
-  APP_STATUS_EXPIRES_AT=$(($(date +%s) + ttl))
+  APP_STATUS_EXPIRES_AT=$((now_ms + (ttl * 1000)))
   app_mark_redraw
 }
 
@@ -68,7 +74,13 @@ app_get_status_message() {
 }
 
 app_expire_status_if_needed() {
-  if [ "$APP_STATUS_EXPIRES_AT" -gt 0 ] && [ "$(date +%s)" -ge "$APP_STATUS_EXPIRES_AT" ]; then
+  local now_ms="${1:-}"
+
+  if [ -z "$now_ms" ]; then
+    now_ms="$(app_now_millis)"
+  fi
+
+  if [ "$APP_STATUS_EXPIRES_AT" -gt 0 ] && [ "$now_ms" -ge "$APP_STATUS_EXPIRES_AT" ]; then
     APP_STATUS_MESSAGE="Ready."
     APP_STATUS_EXPIRES_AT=0
     return 0
@@ -78,26 +90,8 @@ app_expire_status_if_needed() {
 }
 
 app_input_timeout_seconds() {
-  local now
-  local remaining
-
-  if [ "$APP_VIEW" = "inspect" ] && [ -n "$APP_INSPECT_PID" ]; then
-    printf '0.1\n'
-    return 0
-  fi
-
-  if [ "$APP_STATUS_EXPIRES_AT" -le 0 ]; then
-    printf '1\n'
-    return 0
-  fi
-
-  now="$(date +%s)"
-  remaining=$((APP_STATUS_EXPIRES_AT - now))
-  if [ "$remaining" -lt 1 ]; then
-    remaining=1
-  fi
-
-  printf '%s\n' "$remaining"
+  # Input polling runs on a fixed non-blocking cadence in app_run.
+  printf '0\n'
 }
 
 app_now_millis() {
@@ -152,21 +146,99 @@ app_stop_inspect_top_refresh() {
   APP_INSPECT_TOP_NEXT_AT=0
 }
 
+app_stop_main_refresh() {
+  if [ -n "$APP_MAIN_REFRESH_JOB_PID" ]; then
+    kill "$APP_MAIN_REFRESH_JOB_PID" >/dev/null 2>&1 || true
+    wait "$APP_MAIN_REFRESH_JOB_PID" >/dev/null 2>&1 || true
+    APP_MAIN_REFRESH_JOB_PID=""
+  fi
+
+  if [ -n "$APP_MAIN_REFRESH_JOB_FILE" ] && [ -f "$APP_MAIN_REFRESH_JOB_FILE" ]; then
+    rm -f "$APP_MAIN_REFRESH_JOB_FILE" >/dev/null 2>&1 || true
+  fi
+
+  APP_MAIN_REFRESH_JOB_FILE=""
+  APP_MAIN_REFRESH_NEXT_AT=0
+  APP_MAIN_REFRESH_NOTIFY_ON_COMPLETE=0
+}
+
 app_cleanup() {
+  app_stop_main_refresh
   app_stop_inspect_top_refresh
   app_stop_sudo_keepalive
   ui_restore_terminal
 }
 
 app_refresh_rows() {
-  local row
+  local tmp_file
 
-  APP_ROWS=()
+  tmp_file="$(mktemp "${TMPDIR:-/tmp}/gatan-main-refresh.XXXXXX")" || return 1
+  if ! core_collect_sorted_listeners >"$tmp_file" 2>/dev/null; then
+    rm -f "$tmp_file" >/dev/null 2>&1 || true
+    return 1
+  fi
+
+  app_apply_rows_from_file "$tmp_file" || true
+  rm -f "$tmp_file" >/dev/null 2>&1 || true
+  return 0
+}
+
+app_row_pid() {
+  local row="$1"
+  local pid
+
+  IFS=$'\t' read -r _ pid _ <<EOF_ROW
+$row
+EOF_ROW
+  printf '%s\n' "${pid:-}"
+}
+
+app_row_command() {
+  local row="$1"
+  local command
+
+  IFS=$'\t' read -r command _ <<EOF_ROW
+$row
+EOF_ROW
+  printf '%s\n' "${command:-}"
+}
+
+app_apply_rows_from_file() {
+  local file="$1"
+  local row
+  local prev_selected_pid=""
+  local new_selected_index=-1
+  local changed=0
+  local i
+  local candidate_pid
+  local new_rows=()
+
+  if [ "${#APP_ROWS[@]}" -gt 0 ] && [ "$APP_SELECTED_INDEX" -ge 0 ] && [ "$APP_SELECTED_INDEX" -lt "${#APP_ROWS[@]}" ]; then
+    prev_selected_pid="$(app_row_pid "${APP_ROWS[$APP_SELECTED_INDEX]}")"
+  fi
+
   while IFS= read -r row; do
     if [ -n "$row" ]; then
-      APP_ROWS+=("$row")
+      new_rows+=("$row")
     fi
-  done < <(core_collect_sorted_listeners || true)
+  done <"$file"
+
+  if [ "${#APP_ROWS[@]}" -ne "${#new_rows[@]}" ]; then
+    changed=1
+  else
+    for ((i = 0; i < ${#new_rows[@]}; i++)); do
+      if [ "${APP_ROWS[$i]}" != "${new_rows[$i]}" ]; then
+        changed=1
+        break
+      fi
+    done
+  fi
+
+  if [ "$changed" -eq 0 ]; then
+    return 1
+  fi
+
+  APP_ROWS=("${new_rows[@]}")
 
   if [ "${#APP_ROWS[@]}" -eq 0 ]; then
     APP_SELECTED_INDEX=0
@@ -175,15 +247,102 @@ app_refresh_rows() {
     return 0
   fi
 
-  if [ "$APP_SELECTED_INDEX" -ge "${#APP_ROWS[@]}" ]; then
-    APP_SELECTED_INDEX=$((${#APP_ROWS[@]} - 1))
+  if [ -n "$prev_selected_pid" ]; then
+    for ((i = 0; i < ${#APP_ROWS[@]}; i++)); do
+      candidate_pid="$(app_row_pid "${APP_ROWS[$i]}")"
+      if [ "$candidate_pid" = "$prev_selected_pid" ]; then
+        new_selected_index="$i"
+        break
+      fi
+    done
   fi
 
-  if [ "$APP_SELECTED_INDEX" -lt 0 ]; then
+  if [ "$new_selected_index" -ge 0 ]; then
+    APP_SELECTED_INDEX="$new_selected_index"
+  elif [ "$APP_SELECTED_INDEX" -ge "${#APP_ROWS[@]}" ]; then
+    APP_SELECTED_INDEX=$((${#APP_ROWS[@]} - 1))
+  elif [ "$APP_SELECTED_INDEX" -lt 0 ]; then
     APP_SELECTED_INDEX=0
   fi
 
   app_mark_redraw
+  return 0
+}
+
+app_start_main_refresh() {
+  if [ -n "$APP_MAIN_REFRESH_JOB_PID" ] && kill -0 "$APP_MAIN_REFRESH_JOB_PID" >/dev/null 2>&1; then
+    return 1
+  fi
+
+  if [ -n "$APP_MAIN_REFRESH_JOB_FILE" ] && [ -f "$APP_MAIN_REFRESH_JOB_FILE" ]; then
+    rm -f "$APP_MAIN_REFRESH_JOB_FILE" >/dev/null 2>&1 || true
+  fi
+
+  APP_MAIN_REFRESH_JOB_FILE="$(mktemp "${TMPDIR:-/tmp}/gatan-main-refresh.XXXXXX")" || return 1
+  (
+    core_collect_sorted_listeners >"$APP_MAIN_REFRESH_JOB_FILE" 2>/dev/null || true
+  ) &
+  APP_MAIN_REFRESH_JOB_PID=$!
+  return 0
+}
+
+app_request_main_refresh() {
+  local notify_on_complete="${1:-0}"
+
+  if [ "$notify_on_complete" -eq 1 ]; then
+    APP_MAIN_REFRESH_NOTIFY_ON_COMPLETE=1
+  fi
+
+  APP_MAIN_REFRESH_NEXT_AT=0
+  app_start_main_refresh || true
+  return 0
+}
+
+app_poll_main_refresh() {
+  local now_ms="$1"
+
+  if [ -z "$APP_MAIN_REFRESH_JOB_PID" ]; then
+    return 1
+  fi
+
+  if kill -0 "$APP_MAIN_REFRESH_JOB_PID" >/dev/null 2>&1; then
+    return 1
+  fi
+
+  wait "$APP_MAIN_REFRESH_JOB_PID" >/dev/null 2>&1 || true
+  APP_MAIN_REFRESH_JOB_PID=""
+
+  if [ -n "$APP_MAIN_REFRESH_JOB_FILE" ] && [ -f "$APP_MAIN_REFRESH_JOB_FILE" ]; then
+    app_apply_rows_from_file "$APP_MAIN_REFRESH_JOB_FILE" || true
+    rm -f "$APP_MAIN_REFRESH_JOB_FILE" >/dev/null 2>&1 || true
+  fi
+  APP_MAIN_REFRESH_JOB_FILE=""
+  APP_MAIN_REFRESH_NEXT_AT=$((now_ms + GATAN_MAIN_REFRESH_INTERVAL_MS))
+
+  if [ "$APP_MAIN_REFRESH_NOTIFY_ON_COMPLETE" -eq 1 ]; then
+    APP_MAIN_REFRESH_NOTIFY_ON_COMPLETE=0
+    app_set_status "Refreshed listener list."
+  fi
+
+  return 0
+}
+
+app_tick_main_refresh() {
+  local now_ms="$1"
+
+  app_poll_main_refresh "$now_ms" || true
+
+  if [ -n "$APP_MAIN_REFRESH_JOB_PID" ]; then
+    return 0
+  fi
+
+  if [ "$APP_MAIN_REFRESH_NEXT_AT" -gt "$now_ms" ]; then
+    return 0
+  fi
+
+  app_start_main_refresh || true
+  APP_MAIN_REFRESH_NEXT_AT=$((now_ms + GATAN_MAIN_REFRESH_INTERVAL_MS))
+  return 0
 }
 
 app_selected_row() {
@@ -198,14 +357,14 @@ app_selected_pid() {
   local row
 
   row="$(app_selected_row)" || return 1
-  core_row_field "$row" 2
+  app_row_pid "$row"
 }
 
 app_selected_command() {
   local row
 
   row="$(app_selected_row)" || return 1
-  core_row_field "$row" 1
+  app_row_command "$row"
 }
 
 app_table_height() {
@@ -248,7 +407,7 @@ app_adjust_scroll() {
 
 app_load_inspect() {
   local pid="$1"
-  local top_block
+  local metrics_block
 
   app_stop_inspect_top_refresh
 
@@ -260,8 +419,8 @@ app_load_inspect() {
 
   APP_INSPECT_TOP_CONTENT=""
   APP_INSPECT_TOP_NEXT_AT=0
-  top_block="(loading...)"
-  APP_INSPECT_CONTENT="${APP_INSPECT_STATIC_CONTENT}"$'\n\n'"Top snapshot (PID ${pid}):"$'\n'"${top_block}"
+  metrics_block="(loading...)"
+  APP_INSPECT_CONTENT="${APP_INSPECT_STATIC_CONTENT}"$'\n\n'"Live metrics (PID ${pid}):"$'\n'"${metrics_block}"
 
   app_start_inspect_top_refresh || true
   return 0
@@ -283,8 +442,8 @@ app_start_inspect_top_refresh() {
   APP_INSPECT_TOP_JOB_FILE="$(mktemp "${TMPDIR:-/tmp}/gatan-top.${APP_INSPECT_PID}.XXXXXX")" || return 1
 
   (
-    actions_get_top_snapshot "$APP_INSPECT_PID" >"$APP_INSPECT_TOP_JOB_FILE" 2>/dev/null \
-      || printf '%s\n' "(top snapshot unavailable)" >"$APP_INSPECT_TOP_JOB_FILE"
+    actions_get_live_metrics_snapshot "$APP_INSPECT_PID" >"$APP_INSPECT_TOP_JOB_FILE" 2>/dev/null \
+      || printf '%s\n' "(metrics unavailable)" >"$APP_INSPECT_TOP_JOB_FILE"
   ) &
   APP_INSPECT_TOP_JOB_PID=$!
 
@@ -292,8 +451,8 @@ app_start_inspect_top_refresh() {
 }
 
 app_poll_inspect_top_refresh() {
-  local now_ms
-  local top_block
+  local now_ms="${1:-}"
+  local metrics_block
 
   if [ -z "$APP_INSPECT_TOP_JOB_PID" ]; then
     return 1
@@ -313,38 +472,43 @@ app_poll_inspect_top_refresh() {
   APP_INSPECT_TOP_JOB_FILE=""
 
   if [ -n "$APP_INSPECT_TOP_CONTENT" ]; then
-    top_block="$APP_INSPECT_TOP_CONTENT"
+    metrics_block="$APP_INSPECT_TOP_CONTENT"
   else
-    top_block="(top snapshot unavailable)"
+    metrics_block="(metrics unavailable)"
   fi
-  APP_INSPECT_CONTENT="${APP_INSPECT_STATIC_CONTENT}"$'\n\n'"Top snapshot (PID ${APP_INSPECT_PID}):"$'\n'"${top_block}"
+  APP_INSPECT_CONTENT="${APP_INSPECT_STATIC_CONTENT}"$'\n\n'"Live metrics (PID ${APP_INSPECT_PID}):"$'\n'"${metrics_block}"
 
-  now_ms="$(app_now_millis)"
-  APP_INSPECT_TOP_NEXT_AT=$((now_ms + GATAN_TOP_REFRESH_INTERVAL_MS))
+  if [ -z "$now_ms" ]; then
+    now_ms="$(app_now_millis)"
+  fi
+  APP_INSPECT_TOP_NEXT_AT=$((now_ms + GATAN_METRICS_REFRESH_INTERVAL_MS))
   app_mark_redraw
   return 0
 }
 
 app_tick_inspect_top() {
-  local now_ms
+  local now_ms="${1:-}"
 
   if [ "$APP_VIEW" != "inspect" ] || [ -z "$APP_INSPECT_PID" ]; then
     return 1
   fi
 
-  app_poll_inspect_top_refresh || true
+  if [ -z "$now_ms" ]; then
+    now_ms="$(app_now_millis)"
+  fi
+
+  app_poll_inspect_top_refresh "$now_ms" || true
 
   if [ -n "$APP_INSPECT_TOP_JOB_PID" ]; then
     return 0
   fi
 
-  now_ms="$(app_now_millis)"
   if [ "$APP_INSPECT_TOP_NEXT_AT" -gt "$now_ms" ]; then
     return 0
   fi
 
   app_start_inspect_top_refresh || true
-  APP_INSPECT_TOP_NEXT_AT=$((now_ms + GATAN_TOP_REFRESH_INTERVAL_MS))
+  APP_INSPECT_TOP_NEXT_AT=$((now_ms + GATAN_METRICS_REFRESH_INTERVAL_MS))
   return 0
 }
 
@@ -465,13 +629,12 @@ app_handle_main_key() {
       command="$(app_selected_command || true)"
       if [ -n "$pid" ]; then
         app_kill_pid "$pid" "$command" || true
-        app_refresh_rows
+        app_request_main_refresh 0
       fi
       ;;
     R)
-      app_refresh_rows
-      ui_force_full_redraw
-      app_set_status "Refreshed listener list."
+      app_set_status "Refreshing listener list..."
+      app_request_main_refresh 1
       ;;
     Q)
       APP_RUNNING=0
@@ -487,13 +650,13 @@ app_handle_inspect_key() {
       app_stop_inspect_top_refresh
       APP_VIEW="main"
       ui_force_full_redraw
-      app_refresh_rows
+      app_request_main_refresh 0
       app_mark_redraw
       ;;
     K)
       if [ -n "$APP_INSPECT_PID" ]; then
         app_kill_pid "$APP_INSPECT_PID" "$APP_INSPECT_COMMAND" || true
-        app_refresh_rows
+        app_request_main_refresh 0
 
         if actions_pid_exists "$APP_INSPECT_PID"; then
           app_load_inspect "$APP_INSPECT_PID" || true
@@ -520,6 +683,8 @@ app_handle_inspect_key() {
 
 app_run() {
   local key
+  local now_ms
+  local has_epochrealtime=0
 
   core_require_dependencies || return 1
 
@@ -529,7 +694,12 @@ app_run() {
 
   app_validate_sudo || return 1
   app_start_sudo_keepalive
-  app_refresh_rows
+  app_refresh_rows || true
+  now_ms="$(app_now_millis)"
+  if [ -n "${EPOCHREALTIME:-}" ]; then
+    has_epochrealtime=1
+  fi
+  APP_MAIN_REFRESH_NEXT_AT=$((now_ms + GATAN_MAIN_REFRESH_INTERVAL_MS))
 
   if [ "${GATAN_TEST_DISABLE_UI:-0}" = "1" ]; then
     return 0
@@ -540,10 +710,17 @@ app_run() {
   app_mark_redraw
 
   while [ "$APP_RUNNING" -eq 1 ]; do
-    if app_expire_status_if_needed; then
+    if [ "$has_epochrealtime" -eq 1 ]; then
+      now_ms="$(app_now_millis)"
+    else
+      now_ms=$((now_ms + GATAN_INPUT_POLL_INTERVAL_MS))
+    fi
+
+    if app_expire_status_if_needed "$now_ms"; then
       app_mark_redraw
     fi
-    app_tick_inspect_top || true
+    app_tick_main_refresh "$now_ms" || true
+    app_tick_inspect_top "$now_ms" || true
 
     if [ "$APP_NEEDS_REDRAW" -eq 1 ]; then
       app_adjust_scroll
@@ -557,7 +734,7 @@ app_run() {
       APP_NEEDS_REDRAW=0
     fi
 
-    key="$(ui_read_key "$(app_input_timeout_seconds)" || true)"
+    key="$(ui_read_key "$GATAN_INPUT_POLL_INTERVAL_SECONDS" || true)"
     if [ -z "$key" ]; then
       continue
     fi
