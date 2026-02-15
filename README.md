@@ -26,7 +26,7 @@ When you run `gatan`, it prompts for sudo once, opens a full-screen terminal UI,
 ## Installation (bpkg)
 
 ```bash
-bpkg install lucianbuzzo/gatan
+bpkg install -g lucianbuzzo/gatan
 ```
 
 ## Usage
