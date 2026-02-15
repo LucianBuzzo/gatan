@@ -658,19 +658,118 @@ ui_render_inspect() {
   ui_paint_frame
 }
 
+ui_draw_yes_no_modal() {
+  local message="$1"
+  local term_rows="$2"
+  local term_cols="$3"
+  local title="Confirm action"
+  local hint="Press y/Enter to confirm, n/Esc to cancel"
+  local min_inner=24
+  local max_inner
+  local desired_inner
+  local inner_width
+  local modal_width
+  local modal_height=7
+  local start_row
+  local start_col
+  local border_top
+  local border_bottom
+  local line
+  local framed_line
+  local blank_line
+  local style_bold
+  local style_reset
+
+  if [ "$term_rows" -lt 1 ] || [ "$term_cols" -lt 1 ]; then
+    return 0
+  fi
+
+  if [ "$term_rows" -lt "$modal_height" ] || [ "$term_cols" -lt 4 ]; then
+    ui_term_emit cup "$((term_rows - 1))" 0
+    ui_term_emit el
+    printf '%s' "$(ui_truncate "$message" "$term_cols")"
+    return 0
+  fi
+
+  max_inner=$((term_cols - 2))
+  desired_inner="${#message}"
+  if [ "${#title}" -gt "$desired_inner" ]; then
+    desired_inner="${#title}"
+  fi
+  if [ "${#hint}" -gt "$desired_inner" ]; then
+    desired_inner="${#hint}"
+  fi
+  if [ "$desired_inner" -lt "$min_inner" ]; then
+    desired_inner="$min_inner"
+  fi
+  if [ "$desired_inner" -gt "$max_inner" ]; then
+    desired_inner="$max_inner"
+  fi
+  if [ "$desired_inner" -lt 0 ]; then
+    desired_inner=0
+  fi
+
+  inner_width="$desired_inner"
+  modal_width=$((inner_width + 2))
+  start_row=$(((term_rows - modal_height) / 2))
+  start_col=$(((term_cols - modal_width) / 2))
+  if [ "$start_row" -lt 0 ]; then
+    start_row=0
+  fi
+  if [ "$start_col" -lt 0 ]; then
+    start_col=0
+  fi
+
+  ui_border_line_into border_top "$inner_width" top
+  ui_border_line_into border_bottom "$inner_width" bottom
+  style_bold="$(ui_term_code bold)"
+  style_reset="$(ui_term_code sgr0)"
+
+  ui_term_emit cup "$start_row" "$start_col"
+  printf '%s' "$border_top"
+
+  ui_truncate_into line "$title" "$inner_width"
+  ui_frame_line_into framed_line "$line" "$inner_width"
+  ui_term_emit cup "$((start_row + 1))" "$start_col"
+  printf '%s' "${style_bold}${framed_line}${style_reset}"
+
+  ui_frame_line_into blank_line "" "$inner_width"
+  ui_term_emit cup "$((start_row + 2))" "$start_col"
+  printf '%s' "$blank_line"
+
+  ui_truncate_into line "$message" "$inner_width"
+  ui_frame_line_into framed_line "$line" "$inner_width"
+  ui_term_emit cup "$((start_row + 3))" "$start_col"
+  printf '%s' "$framed_line"
+
+  ui_term_emit cup "$((start_row + 4))" "$start_col"
+  printf '%s' "$blank_line"
+
+  ui_truncate_into line "$hint" "$inner_width"
+  ui_frame_line_into framed_line "$line" "$inner_width"
+  ui_term_emit cup "$((start_row + 5))" "$start_col"
+  printf '%s' "$framed_line"
+
+  ui_term_emit cup "$((start_row + 6))" "$start_col"
+  printf '%s' "$border_bottom"
+}
+
 ui_prompt_yes_no() {
   local prompt="$1"
   local term_rows
   local term_cols
   local key
   local result=1
-
-  ui_get_terminal_size_into term_rows term_cols
+  local render_rows=-1
+  local render_cols=-1
 
   while true; do
-    ui_term_emit cup "$((term_rows - 1))" 0
-    ui_term_emit el
-    printf '%s' "$(ui_truncate "$prompt" "$term_cols")"
+    ui_get_terminal_size_into term_rows term_cols
+    if [ "$term_rows" -ne "$render_rows" ] || [ "$term_cols" -ne "$render_cols" ]; then
+      ui_draw_yes_no_modal "$prompt" "$term_rows" "$term_cols"
+      render_rows="$term_rows"
+      render_cols="$term_cols"
+    fi
 
     key="$(ui_read_key 0.1 || true)"
     if [ -z "$key" ]; then
@@ -678,20 +777,18 @@ ui_prompt_yes_no() {
     fi
 
     case "$key" in
-      Y)
+      Y | ENTER)
         result=0
         break
         ;;
-      N | ENTER | Q | ESC)
+      N | Q | ESC)
         result=1
         break
         ;;
     esac
   done
 
-  ui_term_emit cup "$((term_rows - 1))" 0
-  ui_term_emit el
-  # Prompt text is drawn outside the frame cache, so force a full redraw.
+  # Modal is drawn outside the frame cache, so force a full redraw.
   ui_force_full_redraw
 
   return "$result"

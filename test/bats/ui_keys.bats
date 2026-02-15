@@ -101,7 +101,69 @@ setup() {
   '
 
   [ "$status" -eq 0 ]
-  [ "$output" = "Terminate PID 42? [y/N] rc=0 force=1" ]
+  [[ "$output" == *"Confirm action"* ]]
+  [[ "$output" == *"Terminate PID 42? [y/N]"* ]]
+  [[ "$output" == *"Press y/Enter to confirm, n/Esc to cancel"* ]]
+  [[ "$output" == *"rc=0 force=1"* ]]
+}
+
+@test "ui_prompt_yes_no renders modal in center area" {
+  run env PROJECT_ROOT="$PROJECT_ROOT" bash -c '
+    source "$PROJECT_ROOT/lib/gatan/ui.sh"
+
+    tput() {
+      case "$1" in
+        lines) printf "10\n" ;;
+        cols) printf "60\n" ;;
+        *) return 0 ;;
+      esac
+    }
+
+    ui_term_emit() {
+      printf "<%s" "$1"
+      if [ -n "${2:-}" ]; then
+        printf ",%s" "$2"
+      fi
+      if [ -n "${3:-}" ]; then
+        printf ",%s" "$3"
+      fi
+      printf ">"
+    }
+
+    ui_prompt_yes_no "Terminate PID 42? [y/N] " <<<"y"
+  '
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"<cup,1,"* ]]
+  [[ "$output" == *"<cup,7,"* ]]
+  [[ "$output" == *"<cup,4,"* ]]
+}
+
+@test "ui_prompt_yes_no treats enter as confirm and esc as cancel" {
+  run env PROJECT_ROOT="$PROJECT_ROOT" bash -c '
+    source "$PROJECT_ROOT/lib/gatan/ui.sh"
+
+    tput() {
+      case "$1" in
+        lines) printf "10\n" ;;
+        cols) printf "60\n" ;;
+        *) return 0 ;;
+      esac
+    }
+
+    ui_term_emit() {
+      :
+    }
+
+    ui_prompt_yes_no "Terminate PID 42? [y/N] " <<<""
+    enter_rc="$?"
+    ui_prompt_yes_no "Terminate PID 42? [y/N] " <<<$'\''\033'\''
+    esc_rc="$?"
+    printf "enter=%s esc=%s\n" "$enter_rc" "$esc_rc"
+  '
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"enter=0 esc=1"* ]]
 }
 
 @test "ui_pad_to_width right pads text" {
