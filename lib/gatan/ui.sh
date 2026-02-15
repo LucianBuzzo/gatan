@@ -758,6 +758,7 @@ ui_build_inspect_frame() {
   local show_keybind_padding=0
   local in_attr_block=1
   local in_open_files_section=0
+  local in_top_section=0
   local line_text
   local content_after_indent
   local label
@@ -818,6 +819,17 @@ ui_build_inspect_frame() {
           tail="${content_after_indent:${#label}}"
           framed_line="  ${style_bold}${label}${style_reset}${tail}"
         fi
+      fi
+    fi
+
+    if [[ "$line" == Top\ snapshot\ \(PID* ]]; then
+      in_top_section=1
+    elif [ "$in_top_section" -eq 1 ] && [ -n "$line" ]; then
+      content_after_indent="${framed_line:2}"
+      label="${content_after_indent%%[[:space:]]*}"
+      if [ -n "$label" ] && [ "$label" != "$content_after_indent" ] && [[ "$label" =~ ^[A-Z][A-Z0-9_+-]*$ ]]; then
+        tail="${content_after_indent:${#label}}"
+        framed_line="  ${style_bold}${label}${style_reset}${tail}"
       fi
     fi
 

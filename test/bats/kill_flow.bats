@@ -127,3 +127,68 @@ setup() {
   [[ "$output" == *"sudo_prompt=[gatan] Administrator password: "* ]]
   [[ "$output" == *"rc=0 prompted=1"* ]]
 }
+
+@test "app_load_inspect returns quickly with loading top snapshot" {
+  run env PROJECT_ROOT="$PROJECT_ROOT" bash -c '
+    source "$PROJECT_ROOT/bin/gatan"
+
+    APP_INSPECT_PID="123"
+    actions_inspect_static() {
+      printf "PID      123\n"
+    }
+    actions_get_top_snapshot() {
+      sleep 0.2
+      printf "PID COMMAND %%CPU MEM\n123 node 0.0 20M\n"
+    }
+
+    app_load_inspect "123"
+    rc="$?"
+    has_loading=0
+    has_job=0
+    [[ "$APP_INSPECT_CONTENT" == *"(loading...)"* ]] && has_loading=1
+    if [ -n "$APP_INSPECT_TOP_JOB_PID" ]; then
+      has_job=1
+    fi
+    printf "rc=%s loading=%s job=%s\n" "$rc" "$has_loading" "$has_job"
+    app_stop_inspect_top_refresh
+  '
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"rc=0 loading=1 job=1"* ]]
+}
+
+@test "app_poll_inspect_top_refresh updates inspect content with snapshot" {
+  run env PROJECT_ROOT="$PROJECT_ROOT" bash -c '
+    source "$PROJECT_ROOT/bin/gatan"
+
+    APP_VIEW="inspect"
+    APP_INSPECT_PID="123"
+    actions_inspect_static() {
+      printf "PID      123\n"
+    }
+    actions_get_top_snapshot() {
+      printf "PID COMMAND %%CPU MEM\n123 node 0.0 20M\n"
+    }
+
+    app_load_inspect "123"
+    for _ in 1 2 3 4 5; do
+      app_poll_inspect_top_refresh || true
+      if [ -z "$APP_INSPECT_TOP_JOB_PID" ]; then
+        break
+      fi
+      sleep 0.05
+    done
+
+    has_snapshot=0
+    [[ "$APP_INSPECT_CONTENT" == *"PID COMMAND %CPU MEM"* ]] && has_snapshot=1
+    job_done=0
+    if [ -z "$APP_INSPECT_TOP_JOB_PID" ]; then
+      job_done=1
+    fi
+    printf "job_done=%s snapshot=%s\n" "$job_done" "$has_snapshot"
+    app_stop_inspect_top_refresh
+  '
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"job_done=1 snapshot=1"* ]]
+}

@@ -516,11 +516,11 @@ setup() {
   run env PROJECT_ROOT="$PROJECT_ROOT" bash -c '
     source "$PROJECT_ROOT/lib/gatan/ui.sh"
 
-    APP_INSPECT_CONTENT=$'\''PID      123\nPPID     1\nUSER     alice\nCOMMAND  /usr/bin/node\nCWD      /tmp\n\nOpen files (first 20):\nCOMMAND PID USER FD\nnode 123 alice cwd'\''
+    APP_INSPECT_CONTENT=$'\''PID      123\nPPID     1\nUSER     alice\nCOMMAND  /usr/bin/node\nCWD      /tmp\n\nOpen files (first 20):\nCOMMAND PID USER FD\nnode 123 alice cwd\n\nTop snapshot (PID 123):\nPID         123\nCOMMAND     node\nCPU         0.0\nMEM         20M'\''
 
     tput() {
       case "$1" in
-        lines) printf "18\n" ;;
+        lines) printf "24\n" ;;
         cols) printf "80\n" ;;
         bold) printf "\033[1m" ;;
         sgr0) printf "\033[0m" ;;
@@ -532,25 +532,31 @@ setup() {
 
     pid_line=""
     header_line=""
+    cpu_line=""
     for idx in "${!UI_NEXT_LINES[@]}"; do
       clean="$(printf "%s" "${UI_NEXT_LINES[$idx]}" | sed -E "s/\x1B\\[[0-9;]*[A-Za-z]//g")"
       case "$clean" in
         "  PID"*) pid_line="${UI_NEXT_LINES[$idx]}" ;;
         "  COMMAND PID USER FD"*) header_line="${UI_NEXT_LINES[$idx]}" ;;
+        "  CPU"*) cpu_line="${UI_NEXT_LINES[$idx]}" ;;
       esac
     done
 
     has_pid_bold=0
     has_header_bold=0
+    has_cpu_bold=0
     [[ "$pid_line" == *$'\''\033[1m'\''* ]] && has_pid_bold=1
     [[ "$header_line" == *$'\''\033[1m'\''* ]] && has_header_bold=1
+    [[ "$cpu_line" == *$'\''\033[1m'\''* ]] && has_cpu_bold=1
     printf "pid_bold=%s\n" "$has_pid_bold"
     printf "header_bold=%s\n" "$has_header_bold"
+    printf "cpu_bold=%s\n" "$has_cpu_bold"
   '
 
   [ "$status" -eq 0 ]
   [[ "$output" == *"pid_bold=1"* ]]
   [[ "$output" == *"header_bold=1"* ]]
+  [[ "$output" == *"cpu_bold=1"* ]]
 }
 
 @test "ui_paint_frame updates only changed rows in incremental mode" {

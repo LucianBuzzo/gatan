@@ -28,6 +28,11 @@ APP_STATUS_EXPIRES_AT=0
 APP_INSPECT_PID=""
 APP_INSPECT_COMMAND=""
 APP_INSPECT_CONTENT=""
+APP_INSPECT_STATIC_CONTENT=""
+APP_INSPECT_TOP_CONTENT=""
+APP_INSPECT_TOP_NEXT_AT=0
+APP_INSPECT_TOP_JOB_PID=""
+APP_INSPECT_TOP_JOB_FILE=""
 APP_VIEW="main"
 APP_RUNNING=1
 APP_NEEDS_REDRAW=0
@@ -76,6 +81,11 @@ app_input_timeout_seconds() {
   local now
   local remaining
 
+  if [ "$APP_VIEW" = "inspect" ] && [ -n "$APP_INSPECT_PID" ]; then
+    printf '0.1\n'
+    return 0
+  fi
+
   if [ "$APP_STATUS_EXPIRES_AT" -le 0 ]; then
     printf '1\n'
     return 0
@@ -88,6 +98,25 @@ app_input_timeout_seconds() {
   fi
 
   printf '%s\n' "$remaining"
+}
+
+app_now_millis() {
+  local now_real
+  local seconds
+  local fraction
+
+  if [ -n "${EPOCHREALTIME:-}" ]; then
+    now_real="$EPOCHREALTIME"
+    seconds="${now_real%.*}"
+    fraction="${now_real#*.}"
+    fraction="${fraction//[^0-9]/}"
+    fraction="${fraction}000"
+    fraction="${fraction:0:3}"
+    printf '%s\n' "$((10#$seconds * 1000 + 10#$fraction))"
+    return 0
+  fi
+
+  printf '%s000\n' "$(date +%s)"
 }
 
 app_start_sudo_keepalive() {
@@ -108,7 +137,23 @@ app_stop_sudo_keepalive() {
   fi
 }
 
+app_stop_inspect_top_refresh() {
+  if [ -n "$APP_INSPECT_TOP_JOB_PID" ]; then
+    kill "$APP_INSPECT_TOP_JOB_PID" >/dev/null 2>&1 || true
+    wait "$APP_INSPECT_TOP_JOB_PID" >/dev/null 2>&1 || true
+    APP_INSPECT_TOP_JOB_PID=""
+  fi
+
+  if [ -n "$APP_INSPECT_TOP_JOB_FILE" ] && [ -f "$APP_INSPECT_TOP_JOB_FILE" ]; then
+    rm -f "$APP_INSPECT_TOP_JOB_FILE" >/dev/null 2>&1 || true
+  fi
+
+  APP_INSPECT_TOP_JOB_FILE=""
+  APP_INSPECT_TOP_NEXT_AT=0
+}
+
 app_cleanup() {
+  app_stop_inspect_top_refresh
   app_stop_sudo_keepalive
   ui_restore_terminal
 }
@@ -203,13 +248,103 @@ app_adjust_scroll() {
 
 app_load_inspect() {
   local pid="$1"
+  local top_block
 
-  APP_INSPECT_CONTENT="$(actions_inspect "$pid" 2>/dev/null || true)"
-  if [ -z "$APP_INSPECT_CONTENT" ]; then
+  app_stop_inspect_top_refresh
+
+  APP_INSPECT_STATIC_CONTENT="$(actions_inspect_static "$pid" 2>/dev/null || true)"
+  if [ -z "$APP_INSPECT_STATIC_CONTENT" ]; then
     APP_INSPECT_CONTENT="Process $pid is no longer available."
     return 1
   fi
 
+  APP_INSPECT_TOP_CONTENT=""
+  APP_INSPECT_TOP_NEXT_AT=0
+  top_block="(loading...)"
+  APP_INSPECT_CONTENT="${APP_INSPECT_STATIC_CONTENT}"$'\n\n'"Top snapshot (PID ${pid}):"$'\n'"${top_block}"
+
+  app_start_inspect_top_refresh || true
+  return 0
+}
+
+app_start_inspect_top_refresh() {
+  if [ -z "$APP_INSPECT_PID" ]; then
+    return 1
+  fi
+
+  if [ -n "$APP_INSPECT_TOP_JOB_PID" ] && kill -0 "$APP_INSPECT_TOP_JOB_PID" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if [ -n "$APP_INSPECT_TOP_JOB_FILE" ] && [ -f "$APP_INSPECT_TOP_JOB_FILE" ]; then
+    rm -f "$APP_INSPECT_TOP_JOB_FILE" >/dev/null 2>&1 || true
+  fi
+
+  APP_INSPECT_TOP_JOB_FILE="$(mktemp "${TMPDIR:-/tmp}/gatan-top.${APP_INSPECT_PID}.XXXXXX")" || return 1
+
+  (
+    actions_get_top_snapshot "$APP_INSPECT_PID" >"$APP_INSPECT_TOP_JOB_FILE" 2>/dev/null \
+      || printf '%s\n' "(top snapshot unavailable)" >"$APP_INSPECT_TOP_JOB_FILE"
+  ) &
+  APP_INSPECT_TOP_JOB_PID=$!
+
+  return 0
+}
+
+app_poll_inspect_top_refresh() {
+  local now_ms
+  local top_block
+
+  if [ -z "$APP_INSPECT_TOP_JOB_PID" ]; then
+    return 1
+  fi
+
+  if kill -0 "$APP_INSPECT_TOP_JOB_PID" >/dev/null 2>&1; then
+    return 1
+  fi
+
+  wait "$APP_INSPECT_TOP_JOB_PID" >/dev/null 2>&1 || true
+  APP_INSPECT_TOP_JOB_PID=""
+
+  if [ -n "$APP_INSPECT_TOP_JOB_FILE" ] && [ -f "$APP_INSPECT_TOP_JOB_FILE" ]; then
+    APP_INSPECT_TOP_CONTENT="$(cat "$APP_INSPECT_TOP_JOB_FILE" 2>/dev/null || true)"
+    rm -f "$APP_INSPECT_TOP_JOB_FILE" >/dev/null 2>&1 || true
+  fi
+  APP_INSPECT_TOP_JOB_FILE=""
+
+  if [ -n "$APP_INSPECT_TOP_CONTENT" ]; then
+    top_block="$APP_INSPECT_TOP_CONTENT"
+  else
+    top_block="(top snapshot unavailable)"
+  fi
+  APP_INSPECT_CONTENT="${APP_INSPECT_STATIC_CONTENT}"$'\n\n'"Top snapshot (PID ${APP_INSPECT_PID}):"$'\n'"${top_block}"
+
+  now_ms="$(app_now_millis)"
+  APP_INSPECT_TOP_NEXT_AT=$((now_ms + GATAN_TOP_REFRESH_INTERVAL_MS))
+  app_mark_redraw
+  return 0
+}
+
+app_tick_inspect_top() {
+  local now_ms
+
+  if [ "$APP_VIEW" != "inspect" ] || [ -z "$APP_INSPECT_PID" ]; then
+    return 1
+  fi
+
+  app_poll_inspect_top_refresh || true
+
+  if [ -n "$APP_INSPECT_TOP_JOB_PID" ]; then
+    return 0
+  fi
+
+  now_ms="$(app_now_millis)"
+  if [ "$APP_INSPECT_TOP_NEXT_AT" -gt "$now_ms" ]; then
+    return 0
+  fi
+
+  app_start_inspect_top_refresh || true
+  APP_INSPECT_TOP_NEXT_AT=$((now_ms + GATAN_TOP_REFRESH_INTERVAL_MS))
   return 0
 }
 
@@ -349,6 +484,7 @@ app_handle_inspect_key() {
 
   case "$key" in
     B)
+      app_stop_inspect_top_refresh
       APP_VIEW="main"
       ui_force_full_redraw
       app_refresh_rows
@@ -362,6 +498,7 @@ app_handle_inspect_key() {
         if actions_pid_exists "$APP_INSPECT_PID"; then
           app_load_inspect "$APP_INSPECT_PID" || true
         else
+          app_stop_inspect_top_refresh
           APP_VIEW="main"
           ui_force_full_redraw
         fi
@@ -406,6 +543,7 @@ app_run() {
     if app_expire_status_if_needed; then
       app_mark_redraw
     fi
+    app_tick_inspect_top || true
 
     if [ "$APP_NEEDS_REDRAW" -eq 1 ]; then
       app_adjust_scroll
