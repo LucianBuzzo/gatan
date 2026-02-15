@@ -372,6 +372,7 @@ ui_build_main_frame() {
   local border_bottom
   local framed_line
   local base_fixed
+  local variable_w
 
   ui_get_terminal_size_into term_rows term_cols
   if [ "$term_cols" -lt 4 ]; then
@@ -384,13 +385,28 @@ ui_build_main_frame() {
     table_rows=0
   fi
 
-  base_fixed=$((marker_w + port_w + pid_w + user_w + command_w + 5))
-  bind_w=$((inner_width - base_fixed))
-  if [ "$bind_w" -lt 8 ]; then
-    bind_w=8
-    command_w=$((inner_width - marker_w - port_w - pid_w - user_w - bind_w - 5))
-    if [ "$command_w" -lt 10 ]; then
-      command_w=10
+  base_fixed=$((marker_w + port_w + pid_w + user_w + 5))
+  variable_w=$((inner_width - base_fixed))
+  if [ "$variable_w" -le 0 ]; then
+    command_w=0
+    bind_w=0
+  else
+    # Favor command width in roomy terminals; cap bind so it doesn't overgrow.
+    command_w=$((variable_w * 3 / 4))
+    bind_w=$((variable_w - command_w))
+    if [ "$variable_w" -ge 18 ]; then
+      if [ "$bind_w" -lt 10 ]; then
+        bind_w=10
+        command_w=$((variable_w - bind_w))
+      fi
+      if [ "$bind_w" -gt 32 ]; then
+        bind_w=32
+        command_w=$((variable_w - bind_w))
+      fi
+      if [ "$command_w" -lt 10 ]; then
+        command_w=10
+        bind_w=$((variable_w - command_w))
+      fi
     fi
   fi
 
