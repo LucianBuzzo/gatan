@@ -405,9 +405,133 @@ app_adjust_scroll() {
   fi
 }
 
+app_compose_inspect_content() {
+  local metrics_snapshot="${1:-}"
+  local mode="${2:-ready}"
+  local line
+  local key
+  local value
+  local in_attrs=1
+  local open_files_block=""
+  local info_pid=""
+  local info_ppid=""
+  local info_user=""
+  local info_command=""
+  local info_cwd=""
+  local live_pid=""
+  local live_ppid=""
+  local live_user=""
+  local live_command=""
+  local live_cpu=""
+  local live_mem=""
+  local live_rss=""
+  local live_vsz=""
+  local live_elapsed=""
+  local live_state=""
+  local placeholder="(loading...)"
+  local out_pid
+  local out_ppid
+  local out_user
+  local out_command
+  local out_cwd
+  local out_cpu
+  local out_mem
+  local out_rss
+  local out_vsz
+  local out_elapsed
+  local out_state
+
+  if [ "$mode" = "unavailable" ]; then
+    placeholder="(unavailable)"
+  fi
+
+  while IFS= read -r line; do
+    if [ "$in_attrs" -eq 1 ]; then
+      if [ -z "$line" ]; then
+        in_attrs=0
+        continue
+      fi
+
+      key="${line%%[[:space:]]*}"
+      value="${line#"$key"}"
+      value="${value#"${value%%[![:space:]]*}"}"
+      case "$key" in
+        PID) info_pid="$value" ;;
+        PPID) info_ppid="$value" ;;
+        USER) info_user="$value" ;;
+        COMMAND) info_command="$value" ;;
+        CWD) info_cwd="$value" ;;
+      esac
+      continue
+    fi
+
+    if [ -n "$open_files_block" ]; then
+      open_files_block="${open_files_block}"$'\n'"$line"
+    else
+      open_files_block="$line"
+    fi
+  done <<EOF_STATIC
+$APP_INSPECT_STATIC_CONTENT
+EOF_STATIC
+
+  if [ -n "$metrics_snapshot" ] && [ "$metrics_snapshot" != "(metrics unavailable)" ]; then
+    while IFS= read -r line; do
+      [ -z "$line" ] && continue
+      key="${line%%[[:space:]]*}"
+      value="${line#"$key"}"
+      value="${value#"${value%%[![:space:]]*}"}"
+      case "$key" in
+        PID) live_pid="$value" ;;
+        PPID) live_ppid="$value" ;;
+        USER) live_user="$value" ;;
+        COMMAND) live_command="$value" ;;
+        CPU) live_cpu="$value" ;;
+        MEM) live_mem="$value" ;;
+        RSS) live_rss="$value" ;;
+        VSZ) live_vsz="$value" ;;
+        ELAPSED) live_elapsed="$value" ;;
+        STATE) live_state="$value" ;;
+      esac
+    done <<EOF_METRICS
+$metrics_snapshot
+EOF_METRICS
+  fi
+
+  out_pid="${live_pid:-${info_pid:--}}"
+  out_ppid="${live_ppid:-${info_ppid:--}}"
+  out_user="${live_user:-${info_user:--}}"
+  out_command="${live_command:-${info_command:--}}"
+  out_cwd="${info_cwd:--}"
+  out_cpu="${live_cpu:-$placeholder}"
+  out_mem="${live_mem:-$placeholder}"
+  out_rss="${live_rss:-$placeholder}"
+  out_vsz="${live_vsz:-$placeholder}"
+  out_elapsed="${live_elapsed:-$placeholder}"
+  out_state="${live_state:-$placeholder}"
+
+  printf '%-8s %s\n' "PID" "$out_pid"
+  printf '%-8s %s\n' "PPID" "$out_ppid"
+  printf '%-8s %s\n' "USER" "$out_user"
+  printf '%-8s %s\n' "COMMAND" "$out_command"
+  printf '%-8s %s\n' "CWD" "$out_cwd"
+  printf '%-8s %s\n' "CPU" "$out_cpu"
+  printf '%-8s %s\n' "MEM" "$out_mem"
+  printf '%-8s %s\n' "RSS" "$out_rss"
+  printf '%-8s %s\n' "VSZ" "$out_vsz"
+  printf '%-8s %s\n' "ELAPSED" "$out_elapsed"
+  printf '%-8s %s\n' "STATE" "$out_state"
+  printf '\n'
+
+  if [ -n "$open_files_block" ]; then
+    printf '%s\n' "$open_files_block"
+  else
+    printf 'Open files (first %s):\n' "$GATAN_OPEN_FILES_LIMIT"
+    printf '%s\n' "(no open files data)"
+  fi
+}
+
 app_load_inspect() {
   local pid="$1"
-  local metrics_block
 
   app_stop_inspect_top_refresh
 
@@ -419,8 +543,7 @@ app_load_inspect() {
 
   APP_INSPECT_TOP_CONTENT=""
   APP_INSPECT_TOP_NEXT_AT=0
-  metrics_block="(loading...)"
-  APP_INSPECT_CONTENT="${APP_INSPECT_STATIC_CONTENT}"$'\n\n'"Live metrics (PID ${pid}):"$'\n'"${metrics_block}"
+  APP_INSPECT_CONTENT="$(app_compose_inspect_content "" "loading")"
 
   app_start_inspect_top_refresh || true
   return 0
@@ -452,7 +575,6 @@ app_start_inspect_top_refresh() {
 
 app_poll_inspect_top_refresh() {
   local now_ms="${1:-}"
-  local metrics_block
 
   if [ -z "$APP_INSPECT_TOP_JOB_PID" ]; then
     return 1
@@ -472,11 +594,10 @@ app_poll_inspect_top_refresh() {
   APP_INSPECT_TOP_JOB_FILE=""
 
   if [ -n "$APP_INSPECT_TOP_CONTENT" ]; then
-    metrics_block="$APP_INSPECT_TOP_CONTENT"
+    APP_INSPECT_CONTENT="$(app_compose_inspect_content "$APP_INSPECT_TOP_CONTENT" "ready")"
   else
-    metrics_block="(metrics unavailable)"
+    APP_INSPECT_CONTENT="$(app_compose_inspect_content "" "unavailable")"
   fi
-  APP_INSPECT_CONTENT="${APP_INSPECT_STATIC_CONTENT}"$'\n\n'"Live metrics (PID ${APP_INSPECT_PID}):"$'\n'"${metrics_block}"
 
   if [ -z "$now_ms" ]; then
     now_ms="$(app_now_millis)"

@@ -146,15 +146,17 @@ setup() {
     has_loading=0
     has_job=0
     [[ "$APP_INSPECT_CONTENT" == *"(loading...)"* ]] && has_loading=1
+    has_live_label=0
+    [[ "$APP_INSPECT_CONTENT" == *"Live metrics (PID"* ]] && has_live_label=1
     if [ -n "$APP_INSPECT_TOP_JOB_PID" ]; then
       has_job=1
     fi
-    printf "rc=%s loading=%s job=%s\n" "$rc" "$has_loading" "$has_job"
+    printf "rc=%s loading=%s job=%s live_label=%s\n" "$rc" "$has_loading" "$has_job" "$has_live_label"
     app_stop_inspect_top_refresh
   '
 
   [ "$status" -eq 0 ]
-  [[ "$output" == *"rc=0 loading=1 job=1"* ]]
+  [[ "$output" == *"rc=0 loading=1 job=1 live_label=0"* ]]
 }
 
 @test "app_poll_inspect_top_refresh updates inspect content with snapshot" {
@@ -180,7 +182,7 @@ setup() {
     done
 
     has_snapshot=0
-    [[ "$APP_INSPECT_CONTENT" == *"CPU 1.0"* ]] && has_snapshot=1
+    [[ "$APP_INSPECT_CONTENT" == *"CPU"*1.0* ]] && has_snapshot=1
     job_done=0
     if [ -z "$APP_INSPECT_TOP_JOB_PID" ]; then
       job_done=1
