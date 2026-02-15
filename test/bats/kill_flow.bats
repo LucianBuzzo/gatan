@@ -91,3 +91,39 @@ setup() {
   [ "${lines[0]}" = "redraw=1 status=Temporary" ]
   [ "${lines[1]}" = "expired=yes status=Ready." ]
 }
+
+@test "app_validate_sudo shows explainer and uses custom sudo prompt when needed" {
+  run env PROJECT_ROOT="$PROJECT_ROOT" bash -c '
+    source "$PROJECT_ROOT/bin/gatan"
+
+    prompted=0
+    ui_prompt_sudo_explainer() {
+      [ "$1" = "$GATAN_SUDO_PROMPT" ]
+      prompted=1
+      return 0
+    }
+    ui_restore_terminal() {
+      :
+    }
+    ui_init_terminal() {
+      :
+    }
+    sudo() {
+      if [ "${1:-}" = "-n" ] && [ "${2:-}" = "true" ]; then
+        return 1
+      fi
+      if [ "${1:-}" = "-v" ] && [ "${2:-}" = "-p" ]; then
+        printf "sudo_prompt=%s\n" "${3:-}"
+        return 0
+      fi
+      return 1
+    }
+
+    app_validate_sudo
+    printf "rc=%s prompted=%s\n" "$?" "$prompted"
+  '
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"sudo_prompt=[gatan] Administrator password: "* ]]
+  [[ "$output" == *"rc=0 prompted=1"* ]]
+}

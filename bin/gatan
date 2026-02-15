@@ -214,6 +214,29 @@ app_load_inspect() {
 }
 
 app_validate_sudo() {
+  if sudo -n true >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if [ "${GATAN_TEST_DISABLE_UI:-0}" != "1" ]; then
+    if ! ui_prompt_sudo_explainer "$GATAN_SUDO_PROMPT"; then
+      ui_restore_terminal
+      printf 'Cancelled sudo authentication.\n' >&2
+      return 1
+    fi
+
+    # Restore terminal mode so sudo can read the password prompt normally.
+    ui_restore_terminal
+    if ! sudo -v -p "$GATAN_SUDO_PROMPT"; then
+      printf 'Failed to authenticate with sudo.\n' >&2
+      return 1
+    fi
+
+    ui_init_terminal
+    ui_force_full_redraw
+    return 0
+  fi
+
   if ! sudo -v >/dev/null 2>&1; then
     printf 'Failed to authenticate with sudo.\n' >&2
     return 1
@@ -362,6 +385,11 @@ app_run() {
   local key
 
   core_require_dependencies || return 1
+
+  if [ "${GATAN_TEST_DISABLE_UI:-0}" != "1" ]; then
+    ui_init_terminal
+  fi
+
   app_validate_sudo || return 1
   app_start_sudo_keepalive
   app_refresh_rows
@@ -370,7 +398,6 @@ app_run() {
     return 0
   fi
 
-  ui_init_terminal
   ui_force_full_redraw
   app_set_status "Loaded ${#APP_ROWS[@]} listening services."
   app_mark_redraw

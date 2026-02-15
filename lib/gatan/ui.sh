@@ -1047,3 +1047,113 @@ ui_prompt_yes_no() {
 
   return "$result"
 }
+
+ui_draw_sudo_explainer_screen() {
+  local sudo_prompt="$1"
+  local term_rows="$2"
+  local term_cols="$3"
+  local style_bold
+  local style_reset
+  local title="gatan requires administrator access"
+  local body1="This allows gatan to:"
+  local body2="- list listening ports across all users"
+  local body3="- inspect process details and open files"
+  local body4="- send termination signals to selected processes"
+  local body5="Your password is read by sudo and is never stored by gatan."
+  local prompt_line="Prompt: $sudo_prompt"
+  local hint="Press Enter to continue, Esc/q to cancel."
+  local block_height=9
+  local start_row
+  local row
+  local line
+  local draw_col
+  local draw_line
+
+  style_bold="$(ui_term_code bold)"
+  style_reset="$(ui_term_code sgr0)"
+
+  if [ "$term_rows" -lt 1 ] || [ "$term_cols" -lt 1 ]; then
+    return 0
+  fi
+
+  printf '\033[H\033[2J'
+  start_row=$(((term_rows - block_height) / 2))
+  if [ "$start_row" -lt 0 ]; then
+    start_row=0
+  fi
+
+  row="$start_row"
+  for line in \
+    "$title" \
+    "" \
+    "$body1" \
+    "$body2" \
+    "$body3" \
+    "$body4" \
+    "" \
+    "$body5" \
+    "$prompt_line" \
+    "$hint"; do
+    if [ "$row" -ge "$term_rows" ]; then
+      break
+    fi
+
+    ui_truncate_into draw_line "$line" "$term_cols"
+    draw_col=$(((term_cols - ${#draw_line}) / 2))
+    if [ "$draw_col" -lt 0 ]; then
+      draw_col=0
+    fi
+
+    ui_term_emit cup "$row" "$draw_col"
+    case "$line" in
+      "$title" | "$hint")
+        printf '%s%s%s' "$style_bold" "$draw_line" "$style_reset"
+        ;;
+      "$prompt_line")
+        printf '%s%s%s%s%s' "$style_bold" "$UI_COLOR_TEXT_LIGHT" "$draw_line" "$style_reset" "$UI_COLOR_RESET_FG"
+        ;;
+      *)
+        printf '%s' "$draw_line"
+        ;;
+    esac
+    row=$((row + 1))
+  done
+}
+
+ui_prompt_sudo_explainer() {
+  local sudo_prompt="$1"
+  local term_rows
+  local term_cols
+  local render_rows=-1
+  local render_cols=-1
+  local key
+  local result=1
+
+  while true; do
+    ui_get_terminal_size_into term_rows term_cols
+    if [ "$term_rows" -ne "$render_rows" ] || [ "$term_cols" -ne "$render_cols" ]; then
+      ui_draw_sudo_explainer_screen "$sudo_prompt" "$term_rows" "$term_cols"
+      render_rows="$term_rows"
+      render_cols="$term_cols"
+    fi
+
+    key="$(ui_read_key 0.1 || true)"
+    if [ -z "$key" ]; then
+      continue
+    fi
+
+    case "$key" in
+      ENTER | Y)
+        result=0
+        break
+        ;;
+      ESC | Q | N)
+        result=1
+        break
+        ;;
+    esac
+  done
+
+  ui_force_full_redraw
+  return "$result"
+}

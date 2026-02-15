@@ -166,6 +166,58 @@ setup() {
   [[ "$output" == *"enter=0 esc=1"* ]]
 }
 
+@test "ui_prompt_sudo_explainer confirms on enter and forces full redraw" {
+  run env PROJECT_ROOT="$PROJECT_ROOT" bash -c '
+    source "$PROJECT_ROOT/lib/gatan/ui.sh"
+
+    tput() {
+      case "$1" in
+        lines) printf "18\n" ;;
+        cols) printf "80\n" ;;
+        *) return 0 ;;
+      esac
+    }
+
+    ui_term_emit() {
+      :
+    }
+
+    UI_FORCE_FULL_REDRAW=0
+    ui_prompt_sudo_explainer "[gatan] Administrator password: " <<<""
+    rc="$?"
+    printf "rc=%s force=%s\n" "$rc" "$UI_FORCE_FULL_REDRAW"
+  '
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"gatan requires administrator access"* ]]
+  [[ "$output" == *"Prompt: [gatan] Administrator password:"* ]]
+  [[ "$output" == *"rc=0 force=1"* ]]
+}
+
+@test "ui_prompt_sudo_explainer cancels on esc" {
+  run env PROJECT_ROOT="$PROJECT_ROOT" bash -c '
+    source "$PROJECT_ROOT/lib/gatan/ui.sh"
+
+    tput() {
+      case "$1" in
+        lines) printf "18\n" ;;
+        cols) printf "80\n" ;;
+        *) return 0 ;;
+      esac
+    }
+
+    ui_term_emit() {
+      :
+    }
+
+    ui_prompt_sudo_explainer "[gatan] Administrator password: " <<<$'\''\033'\''
+    printf "rc=%s\n" "$?"
+  '
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"rc=1"* ]]
+}
+
 @test "ui_pad_to_width right pads text" {
   run env PROJECT_ROOT="$PROJECT_ROOT" bash -c '
     source "$PROJECT_ROOT/lib/gatan/ui.sh"
