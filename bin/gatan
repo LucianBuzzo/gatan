@@ -565,8 +565,8 @@ app_start_inspect_top_refresh() {
   APP_INSPECT_TOP_JOB_FILE="$(mktemp "${TMPDIR:-/tmp}/gatan-top.${APP_INSPECT_PID}.XXXXXX")" || return 1
 
   (
-    actions_get_live_metrics_snapshot "$APP_INSPECT_PID" >"$APP_INSPECT_TOP_JOB_FILE" 2>/dev/null \
-      || printf '%s\n' "(metrics unavailable)" >"$APP_INSPECT_TOP_JOB_FILE"
+    actions_get_live_metrics_snapshot "$APP_INSPECT_PID" >"$APP_INSPECT_TOP_JOB_FILE" 2>/dev/null ||
+      printf '%s\n' "(metrics unavailable)" >"$APP_INSPECT_TOP_JOB_FILE"
   ) &
   APP_INSPECT_TOP_JOB_PID=$!
 
