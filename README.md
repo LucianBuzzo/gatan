@@ -37,6 +37,26 @@ gatan --help
 gatan --version
 ```
 
+## Screenshots
+
+<p align="center">
+  <img src="docs/screenshots/gatan-list.png" alt="Main list view showing listening TCP processes" width="900" />
+  <br/>
+  <em>Main list view</em>
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/gatan-inspect.png" alt="Inspect view showing process and command details" width="900" />
+  <br/>
+  <em>Inspect view</em>
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/gatan-kill.png" alt="Kill confirmation flow with SIGTERM and optional SIGKILL" width="900" />
+  <br/>
+  <em>Kill flow</em>
+</p>
+
 ## Keybindings
 
 - `Up` / `Down`: move selection
