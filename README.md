@@ -95,5 +95,5 @@ git config core.hooksPath .githooks
 
 Versioning and releases are managed by `release-please`.
 
-- Merges to `main` update/open a release PR.
+- Merges to `master` update/open a release PR.
 - Merging the release PR updates `VERSION`/`CHANGELOG.md`, creates a tag, and publishes a GitHub release.
