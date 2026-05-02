@@ -7,4 +7,6 @@ if ! command -v bats >/dev/null 2>&1; then
   exit 1
 fi
 
-bats test/bats
+project_root="$(cd "$(dirname "$0")/.." && pwd)"
+
+bats "$project_root/test/bats"
