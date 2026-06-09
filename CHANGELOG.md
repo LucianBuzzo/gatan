@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.1](https://github.com/LucianBuzzo/gatan/compare/gatan-v0.3.0...gatan-v0.3.1) (2026-06-09)
+
+
+### Bug Fixes
+
+* run bats tests relative to script path ([6f25eb0](https://github.com/LucianBuzzo/gatan/commit/6f25eb0188ac52fd3e36b0b3d6d4f4ef0a522103))
+* **test:** resolve bats path from script location ([27419f7](https://github.com/LucianBuzzo/gatan/commit/27419f719919ae2009b9a1b6b43a0c7c2275b50d))
+
 ## [0.3.0](https://github.com/LucianBuzzo/gatan/compare/gatan-v0.2.0...gatan-v0.3.0) (2026-02-15)
 
 
